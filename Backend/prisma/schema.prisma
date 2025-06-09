@@ -1,0 +1,267 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+// Beacon House Work Scheduling Database Schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ================================
+// CORE RESIDENT/EMPLOYEE DATA
+// ================================
+
+model Resident {
+  id              Int      @id @default(autoincrement())
+  firstName       String
+  lastName        String
+  admissionDate   DateTime // For calculating tenure (6+ months for thrift stores)
+  isActive        Boolean  @default(true)
+  notes           String?  // Any special considerations
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relationships
+  qualifications     ResidentQualification[]
+  availability       Availability[]
+  appointments       Appointment[]
+  shiftAssignments   ShiftAssignment[]
+  restrictions       ResidentRestriction[]
+
+  @@map("residents")
+}
+
+// ================================
+// QUALIFICATIONS & ROLES
+// ================================
+
+model Qualification {
+  id          Int     @id @default(autoincrement())
+  name        String  @unique // "prep_lead", "kitchen_helper", "thrift_manager_pedro", "thrift_manager_long_beach", "thrift_manager_both", "driver_shelter_run", "driver_thrift_store", "driver_trash_pickup"
+  description String?
+  category    String  // "kitchen", "driving", "management", "general"
+  
+  // Relationships
+  residents ResidentQualification[]
+  shiftRoles ShiftRole[]
+
+  @@map("qualifications")
+}
+
+model ResidentQualification {
+  id            Int      @id @default(autoincrement())
+  residentId    Int
+  qualificationId Int
+  dateEarned    DateTime @default(now())
+  isActive      Boolean  @default(true)
+  notes         String?  // How they earned it, any conditions
+
+  // Relationships
+  resident      Resident     @relation(fields: [residentId], references: [id], onDelete: Cascade)
+  qualification Qualification @relation(fields: [qualificationId], references: [id])
+
+  @@unique([residentId, qualificationId])
+  @@map("resident_qualifications")
+}
+
+// ================================
+// WORK RESTRICTIONS
+// ================================
+
+model ResidentRestriction {
+  id         Int      @id @default(autoincrement())
+  residentId Int
+  type       String   // "physical", "medical", "behavioral", "location"
+  description String  // "Cannot lift over 25lbs", "Cannot work with cleaning chemicals", etc.
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  resident Resident @relation(fields: [residentId], references: [id], onDelete: Cascade)
+
+  @@map("resident_restrictions")
+}
+
+// ================================
+// DEPARTMENTS & SHIFTS
+// ================================
+
+model Department {
+  id          Int    @id @default(autoincrement())
+  name        String @unique // "kitchen", "shelter_runs", "thrift_store_pedro", "thrift_store_long_beach", "trash_pickup", "donation_pickup"
+  description String?
+  priority    Int    @default(0) // Higher number = higher priority (kitchen gets highest)
+  
+  shifts Shift[]
+
+  @@map("departments")
+}
+
+model Shift {
+  id           Int     @id @default(autoincrement())
+  departmentId Int
+  name         String  // "prep_team", "morning_dishwasher", "shelter_run_morning", etc.
+  description  String?
+  startTime    String  // "08:30" (24-hour format)
+  endTime      String  // "16:00"
+  
+  // Schedule pattern
+  monday       Boolean @default(false)
+  tuesday      Boolean @default(false)
+  wednesday    Boolean @default(false)
+  thursday     Boolean @default(false)
+  friday       Boolean @default(false)
+  saturday     Boolean @default(false)
+  sunday       Boolean @default(false)
+  
+  // Staffing requirements
+  minTenureMonths Int @default(0) // 6 for thrift stores, 0 for others
+  
+  // Appointment conflict rules
+  blocksAllAppointments    Boolean @default(false) // True for long shifts
+  blocksCounselingOnly     Boolean @default(false) // True for thrift stores
+  allowsTemporaryLeave     Boolean @default(false) // True for doctor appointments during thrift store
+  
+  isActive     Boolean @default(true)
+  
+  // Relationships
+  department   Department @relation(fields: [departmentId], references: [id])
+  roles        ShiftRole[]
+  assignments  ShiftAssignment[]
+
+  @@map("shifts")
+}
+
+model ShiftRole {
+  id              Int  @id @default(autoincrement())
+  shiftId         Int
+  qualificationId Int? // NULL means anyone can fill this role
+  roleTitle       String // "prep_worker", "prep_lead", "driver", "assistant", "manager"
+  requiredCount   Int  @default(1) // How many people needed for this role
+  
+  shift         Shift          @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  qualification Qualification? @relation(fields: [qualificationId], references: [id])
+
+  @@map("shift_roles")
+}
+
+// ================================
+// AVAILABILITY & SCHEDULING
+// ================================
+
+model Availability {
+  id         Int    @id @default(autoincrement())
+  residentId Int
+  dayOfWeek  Int    // 0=Sunday, 1=Monday, ..., 6=Saturday
+  startTime  String // "06:00"
+  endTime    String // "22:00"
+  isActive   Boolean @default(true)
+
+  resident Resident @relation(fields: [residentId], references: [id], onDelete: Cascade)
+
+  @@map("availability")
+}
+
+model AppointmentType {
+  id          Int    @id @default(autoincrement())
+  name        String @unique // "counseling", "medical", "court", "family_visit"
+  description String?
+  priority    Int    @default(0) // Higher = more important, harder to reschedule
+  
+  appointments Appointment[]
+
+  @@map("appointment_types")
+}
+
+model Appointment {
+  id                Int      @id @default(autoincrement())
+  residentId        Int
+  appointmentTypeId Int
+  title             String
+  startDateTime     DateTime
+  endDateTime       DateTime
+  isRecurring       Boolean  @default(false)
+  recurringPattern  String?  // "weekly", "biweekly", etc.
+  notes             String?
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @default(now())
+
+  resident        Resident        @relation(fields: [residentId], references: [id], onDelete: Cascade)
+  appointmentType AppointmentType @relation(fields: [appointmentTypeId], references: [id])
+
+  @@map("appointments")
+}
+
+// ================================
+// SCHEDULE ASSIGNMENTS
+// ================================
+
+model SchedulePeriod {
+  id        Int      @id @default(autoincrement())
+  name      String   // "Week of 2025-06-09", "June 2025"
+  startDate DateTime
+  endDate   DateTime
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  
+  assignments ShiftAssignment[]
+
+  @@map("schedule_periods")
+}
+
+model ShiftAssignment {
+  id               Int      @id @default(autoincrement())
+  schedulePeriodId Int
+  shiftId          Int
+  residentId       Int
+  assignedDate     DateTime // Specific date for this assignment
+  roleTitle        String   // What role they're filling ("prep_lead", "driver", etc.)
+  
+  // Status tracking
+  status           String   @default("scheduled") // "scheduled", "completed", "no_show", "covered"
+  notes            String?
+  createdAt        DateTime @default(now())
+
+  schedulePeriod SchedulePeriod @relation(fields: [schedulePeriodId], references: [id])
+  shift          Shift          @relation(fields: [shiftId], references: [id])
+  resident       Resident       @relation(fields: [residentId], references: [id])
+
+  @@unique([shiftId, assignedDate, roleTitle]) // Prevent double-booking same role
+  @@map("shift_assignments")
+}
+
+// ================================
+// CONFLICT TRACKING
+// ================================
+
+model ScheduleConflict {
+  id          Int      @id @default(autoincrement())
+  residentId  Int
+  conflictDate DateTime
+  conflictType String  // "appointment_overlap", "double_booking", "insufficient_tenure", "missing_qualification"
+  description String
+  severity    String   @default("warning") // "warning", "error", "info"
+  isResolved  Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@map("schedule_conflicts")
+}
+
+// ================================
+// SYSTEM SETTINGS
+// ================================
+
+model SystemSetting {
+  id    Int    @id @default(autoincrement())
+  key   String @unique
+  value String
+  
+  @@map("system_settings")
+}

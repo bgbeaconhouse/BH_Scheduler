@@ -234,64 +234,46 @@ const AppointmentsManagement: React.FC = () => {
   };
 
 const handleEdit = (appointment: Appointment) => {
-  console.log('=== COMPREHENSIVE EDIT DEBUG ===');
-  console.log('Raw appointment.startDateTime from API:', appointment.startDateTime);
-  console.log('Raw appointment.endDateTime from API:', appointment.endDateTime);
+  // Use proper UTC to local conversion - this is the correct approach!
+  const startDate = new Date(appointment.startDateTime);
+  const endDate = new Date(appointment.endDateTime);
   
-  // Let's try different parsing approaches and see what they give us
-  const approach1 = new Date(appointment.startDateTime);
-  const approach2 = new Date(appointment.startDateTime.replace('Z', ''));
+  // Convert to local date and time strings for form inputs
+  const formatDateForInput = (date: Date) => {
+    // Get local date in YYYY-MM-DD format
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
   
-  console.log('Approach 1 - new Date(appointment.startDateTime):');
-  console.log('  toString():', approach1.toString());
-  console.log('  toISOString():', approach1.toISOString());
-  console.log('  getHours():', approach1.getHours());
+  const formatTimeForInput = (date: Date) => {
+    // Get local time in HH:MM format
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    return `${hours}:${minutes}`;
+  };
   
-  console.log('Approach 2 - new Date(appointment.startDateTime.replace("Z", "")):');
-  console.log('  toString():', approach2.toString());
-  console.log('  toISOString():', approach2.toISOString());
-  console.log('  getHours():', approach2.getHours());
+  console.log('=== EDIT SUCCESS ===');
+  console.log('Stored UTC time:', appointment.startDateTime);
+  console.log('Converted to local:', startDate.toString());
+  console.log('Form date field:', formatDateForInput(startDate));
+  console.log('Form time field:', formatTimeForInput(startDate));
+  console.log('====================');
   
-  // Let's also check what your DateUtils functions return
-  try {
-    const dateUtilsResult = DateUtils.fromLocalISOString(appointment.startDateTime);
-    console.log('DateUtils.fromLocalISOString result:');
-    console.log('  toString():', dateUtilsResult.toString());
-    console.log('  getHours():', dateUtilsResult.getHours());
-  } catch (e) {
-    console.log('DateUtils.fromLocalISOString error:', e);
-  }
-  
-  // For now, let's use a manual approach that should work
-  // We'll extract the date and time components directly
-  const isoString = appointment.startDateTime;
-  const dateMatch = isoString.match(/(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/);
-  
-  if (dateMatch) {
-    const [, datePart, timePart] = dateMatch;
-    console.log('Manual extraction:');
-    console.log('  Date part:', datePart);
-    console.log('  Time part:', timePart);
-    
-    // Use these directly
-    setEditingAppointment(appointment);
-    setAppointmentForm({
-      residentId: appointment.residentId.toString(),
-      appointmentTypeId: appointment.appointmentTypeId.toString(),
-      title: appointment.title,
-      startDate: datePart,
-      startTime: timePart,
-      endTime: appointment.endDateTime.match(/T(\d{2}:\d{2})/)?.[1] || '11:00',
-      isRecurring: false,
-      recurringDays: [false, false, false, false, false, false, false],
-      recurringEndDate: '',
-      notes: appointment.notes || ''
-    });
-  } else {
-    console.log('Could not parse date/time from:', isoString);
-  }
-  
-  console.log('================================');
+  setEditingAppointment(appointment);
+  setAppointmentForm({
+    residentId: appointment.residentId.toString(),
+    appointmentTypeId: appointment.appointmentTypeId.toString(),
+    title: appointment.title,
+    startDate: formatDateForInput(startDate),
+    startTime: formatTimeForInput(startDate),
+    endTime: formatTimeForInput(endDate),
+    isRecurring: false, // Don't support editing recurring appointments
+    recurringDays: [false, false, false, false, false, false, false],
+    recurringEndDate: '',
+    notes: appointment.notes || ''
+  });
   setShowForm(true);
 };
 

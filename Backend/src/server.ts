@@ -1823,54 +1823,143 @@ app.put('/api/appointments/recurring-series', async (req: any, res: any) => {
   }
 });
 
-// In your server.ts, update the DELETE route with more logging:
+// Add this BEFORE your existing DELETE route to check if the route is being hit at all:
+
 app.delete('/api/appointments/recurring-series', async (req: any, res: any) => {
+  console.log('🔴 DELETE ROUTE HIT - START');
+  console.log('🔴 Request method:', req.method);
+  console.log('🔴 Request URL:', req.url);
+  console.log('🔴 Request headers:', req.headers);
+  console.log('🔴 Request body:', req.body);
+  console.log('🔴 Body type:', typeof req.body);
+  console.log('🔴 Body keys:', Object.keys(req.body || {}));
+  
   try {
     const { recurringPattern, residentId } = req.body;
     
-    console.log('=== DELETE RECURRING SERIES ===');
-    console.log('Request body:', req.body);
-    console.log('Pattern:', recurringPattern);
-    console.log('Resident ID:', residentId);
+    console.log('🔴 Extracted data:');
+    console.log('🔴 - recurringPattern:', recurringPattern);
+    console.log('🔴 - residentId:', residentId);
+    console.log('🔴 - recurringPattern type:', typeof recurringPattern);
+    console.log('🔴 - residentId type:', typeof residentId);
     
     if (!recurringPattern || !residentId) {
-      return res.status(400).json({ error: 'Recurring pattern and resident ID are required' });
+      console.log('🔴 VALIDATION FAILED - Missing required fields');
+      return res.status(400).json({ 
+        error: 'Recurring pattern and resident ID are required',
+        received: { recurringPattern, residentId }
+      });
     }
     
-    // First, let's see what appointments exist
+    console.log('🔴 VALIDATION PASSED - Proceeding with database queries');
+    
+    // Test database connection first
+    console.log('🔴 Testing database connection...');
+    const connectionTest = await prisma.appointment.count();
+    console.log('🔴 Database connection OK, total appointments:', connectionTest);
+    
+    // Check what appointments exist with this exact pattern
+    console.log('🔴 Searching for appointments with pattern:', recurringPattern);
     const existingAppointments = await prisma.appointment.findMany({
       where: {
         residentId: parseInt(residentId),
         recurringPattern: recurringPattern,
         isRecurring: true,
         isActive: true
+      },
+      select: {
+        id: true,
+        title: true,
+        startDateTime: true,
+        recurringPattern: true,
+        isRecurring: true,
+        isActive: true,
+        residentId: true
       }
     });
     
-    console.log(`Found ${existingAppointments.length} existing appointments with pattern:`, recurringPattern);
+    console.log('🔴 Found existing appointments:', existingAppointments.length);
+    console.log('🔴 Appointment details:');
+    existingAppointments.forEach((apt, index) => {
+      console.log(`🔴   ${index + 1}. ID: ${apt.id}, Title: ${apt.title}`);
+      console.log(`🔴      Pattern: "${apt.recurringPattern}"`);
+      console.log(`🔴      Start: ${apt.startDateTime}`);
+      console.log(`🔴      Recurring: ${apt.isRecurring}, Active: ${apt.isActive}`);
+      console.log(`🔴      ResidentId: ${apt.residentId}`);
+    });
     
-    // Then check future appointments
-    const futureAppointments = await prisma.appointment.findMany({
-      where: {
-        residentId: parseInt(residentId),
-        recurringPattern: recurringPattern,
-        isRecurring: true,
-        startDateTime: {
-          gte: new Date()
+    if (existingAppointments.length === 0) {
+      console.log('🔴 NO APPOINTMENTS FOUND - Checking similar patterns...');
+      
+      // Let's see ALL appointments for this resident to debug pattern matching
+      const allResidentAppointments = await prisma.appointment.findMany({
+        where: {
+          residentId: parseInt(residentId),
+          isActive: true
         },
-        isActive: true
-      }
+        select: {
+          id: true,
+          title: true,
+          recurringPattern: true,
+          isRecurring: true
+        }
+      });
+      
+      console.log('🔴 ALL appointments for resident', residentId, ':', allResidentAppointments.length);
+      allResidentAppointments.forEach((apt, index) => {
+        console.log(`🔴   ${index + 1}. ID: ${apt.id}, Title: "${apt.title}"`);
+        console.log(`🔴      Pattern: "${apt.recurringPattern}"`);
+        console.log(`🔴      Is Recurring: ${apt.isRecurring}`);
+        console.log(`🔴      Pattern Match: ${apt.recurringPattern === recurringPattern}`);
+      });
+      
+      const response = { 
+        message: 'No appointments found with this recurring pattern',
+        deletedCount: 0,
+        searchedPattern: recurringPattern,
+        searchedResidentId: residentId,
+        totalAppointmentsForResident: allResidentAppointments.length,
+        availablePatterns: allResidentAppointments.map(apt => apt.recurringPattern).filter(Boolean)
+      };
+      
+      console.log('🔴 Sending response:', response);
+      return res.json(response);
+    }
+    
+    // Get current time for future filtering
+    const now = new Date();
+    console.log('🔴 Current time:', now.toISOString());
+    
+    // Find future appointments
+    const futureAppointments = existingAppointments.filter(apt => {
+      const aptDate = new Date(apt.startDateTime);
+      const isFuture = aptDate >= now;
+      console.log(`🔴   Appointment ${apt.id}: ${apt.startDateTime} is future? ${isFuture}`);
+      return isFuture;
     });
     
-    console.log(`Found ${futureAppointments.length} future appointments to delete`);
+    console.log('🔴 Future appointments to delete:', futureAppointments.length);
     
-    const deletedAppointments = await prisma.appointment.updateMany({
+    if (futureAppointments.length === 0) {
+      const response = { 
+        message: 'No future appointments found in this recurring series',
+        deletedCount: 0,
+        totalFound: existingAppointments.length,
+        allInPast: true
+      };
+      console.log('🔴 No future appointments, sending response:', response);
+      return res.json(response);
+    }
+    
+    // Perform the deletion
+    console.log('🔴 Performing deletion...');
+    const deleteResult = await prisma.appointment.updateMany({
       where: {
         residentId: parseInt(residentId),
         recurringPattern: recurringPattern,
         isRecurring: true,
         startDateTime: {
-          gte: new Date()
+          gte: now
         },
         isActive: true
       },
@@ -1879,15 +1968,49 @@ app.delete('/api/appointments/recurring-series', async (req: any, res: any) => {
       }
     });
     
-    console.log(`Actually deleted ${deletedAppointments.count} appointments`);
+    console.log('🔴 Delete result:', deleteResult);
     
-    res.json({ 
-      message: `Deleted ${deletedAppointments.count} future appointments from series`,
-      deletedCount: deletedAppointments.count 
+    // Verify deletion
+    const remainingActive = await prisma.appointment.count({
+      where: {
+        residentId: parseInt(residentId),
+        recurringPattern: recurringPattern,
+        isRecurring: true,
+        startDateTime: {
+          gte: now
+        },
+        isActive: true
+      }
     });
+    
+    console.log('🔴 Remaining active future appointments:', remainingActive);
+    
+    const finalResponse = { 
+      message: `Successfully deleted ${deleteResult.count} future appointments from recurring series`,
+      deletedCount: deleteResult.count,
+      totalFound: existingAppointments.length,
+      futureFound: futureAppointments.length,
+      remainingActive: remainingActive
+    };
+    
+    console.log('🔴 Sending final response:', finalResponse);
+    console.log('🔴 DELETE ROUTE - END SUCCESS');
+    
+    return res.json(finalResponse);
+    
   } catch (error: any) {
-    console.error('Error deleting appointment series:', error);
-    res.status(500).json({ error: 'Failed to delete appointment series' });
+    console.error('🔴 ERROR in delete route:', error);
+    console.error('🔴 Error message:', error.message);
+    console.error('🔴 Error stack:', error.stack);
+    
+    const errorResponse = { 
+      error: 'Failed to delete appointment series',
+      details: error.message,
+      stack: error.stack 
+    };
+    
+    console.log('🔴 Sending error response:', errorResponse);
+    return res.status(500).json(errorResponse);
   }
 });
 

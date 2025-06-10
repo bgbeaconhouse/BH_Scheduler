@@ -1439,32 +1439,55 @@ app.post('/api/appointments', async (req: any, res: any) => {
       notes 
     } = req.body;
     
-    // DEBUG: Log what we received from frontend
-    console.log('=== APPOINTMENT DEBUG ===');
-    console.log('Received startDateTime:', startDateTime);
-    console.log('Received endDateTime:', endDateTime);
-    console.log('Type of startDateTime:', typeof startDateTime);
-    
     if (!residentId || !appointmentTypeId || !title || !startDateTime || !endDateTime) {
       return res.status(400).json({ error: 'Resident, appointment type, title, start time, and end time are required' });
     }
 
-    // Try different parsing approaches
-    const approach1 = new Date(startDateTime);
-    const approach2 = parseAsLocalDate(startDateTime);
+    // Create dates without timezone conversion
+    // The input is local time, so we parse it as local time
+    function parseAsLocalTime(dateString: string): Date {
+      // Remove any Z suffix to prevent UTC interpretation
+      const cleanString = dateString.replace('Z', '');
+      
+      // Parse the components manually to avoid timezone issues
+      const [datePart, timePart] = cleanString.split('T');
+      const [year, month, day] = datePart.split('-').map(Number);
+      const [hour, minute, second] = (timePart + ':00:00').split(':').map(Number);
+      
+      // Create date as local time - this preserves the intended time
+      return new Date(year, month - 1, day, hour, minute, second || 0);
+    }
+
+    const startDate = parseAsLocalTime(startDateTime);
+    const endDate = parseAsLocalTime(endDateTime);
     
-    console.log('Approach 1 (new Date):', approach1.toISOString());
-    console.log('Approach 1 local string:', approach1.toString());
-    console.log('Approach 2 (parseAsLocalDate):', approach2.toISOString());
-    console.log('Approach 2 local string:', approach2.toString());
-    
-    // Use a simple approach - just store exactly what was sent
-    const startDate = new Date(startDateTime.replace('Z', ''));
-    const endDate = new Date(endDateTime.replace('Z', ''));
-    
-    console.log('Final startDate to store:', startDate.toISOString());
-    console.log('Final endDate to store:', endDate.toISOString());
-    console.log('========================');
+    console.log('=== APPOINTMENT DEBUG FIXED ===');
+    console.log('Received startDateTime:', startDateTime);
+    console.log('Parsed as local startDate:', startDate.toString());
+    console.log('Storing in DB as:', startDate.toISOString());
+    console.log('===============================');
+
+    // Check for overlapping appointments
+    const overlapping = await prisma.appointment.findFirst({
+      where: {
+        residentId: parseInt(residentId),
+        isActive: true,
+        OR: [
+          {
+            startDateTime: {
+              lt: endDate
+            },
+            endDateTime: {
+              gt: startDate
+            }
+          }
+        ]
+      }
+    });
+
+    if (overlapping) {
+      return res.status(400).json({ error: 'Appointment overlaps with existing appointment' });
+    }
 
     const appointment = await prisma.appointment.create({
       data: {
@@ -1487,9 +1510,6 @@ app.post('/api/appointments', async (req: any, res: any) => {
         appointmentType: true
       }
     });
-    
-    console.log('Stored appointment startDateTime:', appointment.startDateTime.toISOString());
-    console.log('========================');
     
     res.status(201).json(appointment);
   } catch (error: any) {
@@ -1516,9 +1536,16 @@ app.put('/api/appointments/:id', async (req: any, res: any) => {
       return res.status(400).json({ error: 'Resident, appointment type, title, start time, and end time are required' });
     }
 
-    // Parse dates as local time (no timezone conversion)
-    const startDate = parseAsLocalDate(startDateTime);
-    const endDate = parseAsLocalDate(endDateTime);
+    function parseAsLocalTime(dateString: string): Date {
+      const cleanString = dateString.replace('Z', '');
+      const [datePart, timePart] = cleanString.split('T');
+      const [year, month, day] = datePart.split('-').map(Number);
+      const [hour, minute, second] = (timePart + ':00:00').split(':').map(Number);
+      return new Date(year, month - 1, day, hour, minute, second || 0);
+    }
+
+    const startDate = parseAsLocalTime(startDateTime);
+    const endDate = parseAsLocalTime(endDateTime);
 
     // Check for overlapping appointments (excluding current appointment)
     const overlapping = await prisma.appointment.findFirst({

@@ -159,11 +159,29 @@ const AppointmentsManagement: React.FC = () => {
               // Delete old series and create new one
               try {
                 console.log('Deleting old series...');
-                // First delete the old series
-                const deleteResponse = await appointmentsApi.deleteRecurringSeries(
-                  editingAppointment.recurringPattern,
-                  editingAppointment.residentId
-                );
+                console.log('Pattern:', editingAppointment.recurringPattern);
+                console.log('Resident ID:', editingAppointment.residentId);
+                
+                // Use direct fetch instead of API client
+                const response = await fetch('/api/appointments/recurring-series', {
+                  method: 'DELETE',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
+                  },
+                  body: JSON.stringify({
+                    recurringPattern: editingAppointment.recurringPattern,
+                    residentId: editingAppointment.residentId
+                  })
+                });
+                
+                if (!response.ok) {
+                  const errorText = await response.text();
+                  console.error('Delete response error:', errorText);
+                  throw new Error(`Failed to delete series: ${response.status} ${errorText}`);
+                }
+                
+                const deleteResponse = await response.json();
                 console.log('Delete response:', deleteResponse);
 
                 // Then create new recurring series starting from today
@@ -215,15 +233,30 @@ const AppointmentsManagement: React.FC = () => {
                 };
                 console.log('Update data:', updateData);
                 
-                const response = await appointmentsApi.updateRecurringSeries(updateData);
-                console.log('Update response:', response);
+                const response = await fetch('/api/appointments/recurring-series', {
+                  method: 'PUT',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
+                  },
+                  body: JSON.stringify(updateData)
+                });
+                
+                if (!response.ok) {
+                  const errorText = await response.text();
+                  console.error('Update response error:', errorText);
+                  throw new Error(`Failed to update series: ${response.status} ${errorText}`);
+                }
+                
+                const result = await response.json();
+                console.log('Update response:', result);
                 
                 // Close form and refresh appointments
                 console.log('Refreshing appointments...');
                 await fetchAppointments();
                 console.log('Resetting form...');
                 resetForm();
-                setError(`✅ Updated ${response.data.updatedCount} appointments in recurring series (times/details only)`);
+                setError(`✅ Updated ${result.updatedCount} appointments in recurring series (times/details only)`);
                 setTimeout(() => setError(''), 4000);
                 return; // Exit the function early
               } catch (error: any) {
@@ -256,15 +289,30 @@ const AppointmentsManagement: React.FC = () => {
                 };
                 console.log('Update data:', updateData);
                 
-                const response = await appointmentsApi.updateRecurringSeries(updateData);
-                console.log('Series update response:', response);
+                const response = await fetch('/api/appointments/recurring-series', {
+                  method: 'PUT',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
+                  },
+                  body: JSON.stringify(updateData)
+                });
+                
+                if (!response.ok) {
+                  const errorText = await response.text();
+                  console.error('Update response error:', errorText);
+                  throw new Error(`Failed to update series: ${response.status} ${errorText}`);
+                }
+                
+                const result = await response.json();
+                console.log('Series update response:', result);
                 
                 // Close form and refresh appointments
                 console.log('Refreshing appointments...');
                 await fetchAppointments();
                 console.log('Resetting form...');
                 resetForm();
-                setError(`✅ Updated ${response.data.updatedCount} appointments in recurring series`);
+                setError(`✅ Updated ${result.updatedCount} appointments in recurring series`);
                 setTimeout(() => setError(''), 4000);
                 return; // Exit the function early
               } catch (error: any) {

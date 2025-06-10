@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { appointmentsApi, appointmentTypesApi, residentsApi } from '../api/client';
+import { DateUtils } from '../utils/dateutils';
 
 interface Appointment {
   id: number;
@@ -84,10 +85,9 @@ const AppointmentsManagement: React.FC = () => {
   }, [selectedWeek]);
 
   const setCurrentWeek = () => {
-    const today = new Date();
-    const monday = new Date(today);
-    monday.setDate(today.getDate() - today.getDay() + 1); // Get Monday
-    setSelectedWeek(monday.toISOString().split('T')[0]);
+    const today = DateUtils.today();
+    const weekDates = DateUtils.getWeekDates(today);
+    setSelectedWeek(DateUtils.formatLocalDate(weekDates[0])); // Monday
   };
 
   const fetchData = async () => {
@@ -162,17 +162,17 @@ const AppointmentsManagement: React.FC = () => {
           notes: appointmentForm.notes
         });
       } else {
-        // Create single appointment - handle timezone properly
-        const startDateTime = new Date(`${appointmentForm.startDate}T${appointmentForm.startTime}:00`);
-        const endDateTime = new Date(`${appointmentForm.startDate}T${appointmentForm.endTime}:00`);
+        // Create single appointment - use local timezone handling
+        const startDateTime = DateUtils.createLocalDateTime(appointmentForm.startDate, appointmentForm.startTime);
+        const endDateTime = DateUtils.createLocalDateTime(appointmentForm.startDate, appointmentForm.endTime);
 
         if (editingAppointment) {
           await appointmentsApi.update(editingAppointment.id, {
             residentId: parseInt(appointmentForm.residentId),
             appointmentTypeId: parseInt(appointmentForm.appointmentTypeId),
             title: appointmentForm.title,
-            startDateTime: startDateTime.toISOString(),
-            endDateTime: endDateTime.toISOString(),
+            startDateTime: DateUtils.toLocalISOString(startDateTime),
+            endDateTime: DateUtils.toLocalISOString(endDateTime),
             notes: appointmentForm.notes
           });
         } else {
@@ -180,8 +180,8 @@ const AppointmentsManagement: React.FC = () => {
             residentId: parseInt(appointmentForm.residentId),
             appointmentTypeId: parseInt(appointmentForm.appointmentTypeId),
             title: appointmentForm.title,
-            startDateTime: startDateTime.toISOString(),
-            endDateTime: endDateTime.toISOString(),
+            startDateTime: DateUtils.toLocalISOString(startDateTime),
+            endDateTime: DateUtils.toLocalISOString(endDateTime),
             notes: appointmentForm.notes
           });
         }
@@ -227,17 +227,17 @@ const AppointmentsManagement: React.FC = () => {
   };
 
   const handleEdit = (appointment: Appointment) => {
-    const startDate = new Date(appointment.startDateTime);
-    const endDate = new Date(appointment.endDateTime);
+    const startDate = DateUtils.fromLocalISOString(appointment.startDateTime);
+    const endDate = DateUtils.fromLocalISOString(appointment.endDateTime);
     
     setEditingAppointment(appointment);
     setAppointmentForm({
       residentId: appointment.residentId.toString(),
       appointmentTypeId: appointment.appointmentTypeId.toString(),
       title: appointment.title,
-      startDate: startDate.toLocaleDateString('en-CA'), // Format: YYYY-MM-DD
-      startTime: startDate.toLocaleTimeString('en-GB', {hour12: false}).slice(0, 5), // Format: HH:MM
-      endTime: endDate.toLocaleTimeString('en-GB', {hour12: false}).slice(0, 5), // Format: HH:MM
+      startDate: DateUtils.formatLocalDate(startDate),
+      startTime: DateUtils.formatLocalTime(startDate),
+      endTime: DateUtils.formatLocalTime(endDate),
       isRecurring: false, // Don't support editing recurring appointments
       recurringDays: [false, false, false, false, false, false, false],
       recurringEndDate: '',
@@ -287,9 +287,9 @@ const AppointmentsManagement: React.FC = () => {
   };
 
   const changeWeek = (direction: number) => {
-    const currentWeek = new Date(selectedWeek);
+    const currentWeek = DateUtils.createLocalDateTime(selectedWeek, '00:00');
     currentWeek.setDate(currentWeek.getDate() + (direction * 7));
-    setSelectedWeek(currentWeek.toISOString().split('T')[0]);
+    setSelectedWeek(DateUtils.formatLocalDate(currentWeek));
   };
 
   if (loading) {

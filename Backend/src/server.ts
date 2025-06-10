@@ -1823,17 +1823,46 @@ app.put('/api/appointments/recurring-series', async (req: any, res: any) => {
   }
 });
 
-// Delete recurring appointment series
+// In your server.ts, update the DELETE route with more logging:
 app.delete('/api/appointments/recurring-series', async (req: any, res: any) => {
   try {
     const { recurringPattern, residentId } = req.body;
     
     console.log('=== DELETE RECURRING SERIES ===');
     console.log('Request body:', req.body);
+    console.log('Pattern:', recurringPattern);
+    console.log('Resident ID:', residentId);
     
     if (!recurringPattern || !residentId) {
       return res.status(400).json({ error: 'Recurring pattern and resident ID are required' });
     }
+    
+    // First, let's see what appointments exist
+    const existingAppointments = await prisma.appointment.findMany({
+      where: {
+        residentId: parseInt(residentId),
+        recurringPattern: recurringPattern,
+        isRecurring: true,
+        isActive: true
+      }
+    });
+    
+    console.log(`Found ${existingAppointments.length} existing appointments with pattern:`, recurringPattern);
+    
+    // Then check future appointments
+    const futureAppointments = await prisma.appointment.findMany({
+      where: {
+        residentId: parseInt(residentId),
+        recurringPattern: recurringPattern,
+        isRecurring: true,
+        startDateTime: {
+          gte: new Date()
+        },
+        isActive: true
+      }
+    });
+    
+    console.log(`Found ${futureAppointments.length} future appointments to delete`);
     
     const deletedAppointments = await prisma.appointment.updateMany({
       where: {
@@ -1850,7 +1879,7 @@ app.delete('/api/appointments/recurring-series', async (req: any, res: any) => {
       }
     });
     
-    console.log(`Deleted ${deletedAppointments.count} appointments`);
+    console.log(`Actually deleted ${deletedAppointments.count} appointments`);
     
     res.json({ 
       message: `Deleted ${deletedAppointments.count} future appointments from series`,

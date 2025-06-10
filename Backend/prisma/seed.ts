@@ -91,6 +91,7 @@ async function main() {
 
   console.log('Qualifications seeded successfully!');
   await seedDepartmentsAndShifts();
+  await seedAppointmentTypes();
 }
 
 async function seedDepartmentsAndShifts() {
@@ -605,6 +606,72 @@ async function seedDepartmentsAndShifts() {
   });
 
   console.log('Departments and shifts seeded successfully!');
+}
+
+async function seedAppointmentTypes() {
+  console.log('Seeding appointment types...');
+
+  await prisma.appointmentType.upsert({
+    where: { name: 'counseling' },
+    update: {},
+    create: {
+      name: 'counseling',
+      description: 'Individual or group counseling sessions',
+      priority: 100 // High priority - blocks thrift store work
+    }
+  });
+
+  await prisma.appointmentType.upsert({
+    where: { name: 'medical' },
+    update: {},
+    create: {
+      name: 'medical',
+      description: 'Doctor appointments, medical checkups, procedures',
+      priority: 90 // High priority - allows temporary leave
+    }
+  });
+
+  await prisma.appointmentType.upsert({
+    where: { name: 'court' },
+    update: {},
+    create: {
+      name: 'court',
+      description: 'Court appearances, legal meetings',
+      priority: 95 // Very high priority
+    }
+  });
+
+  await prisma.appointmentType.upsert({
+    where: { name: 'family_visit' },
+    update: {},
+    create: {
+      name: 'family_visit',
+      description: 'Family visits and meetings',
+      priority: 70 // Medium priority
+    }
+  });
+
+  await prisma.appointmentType.upsert({
+    where: { name: 'therapy' },
+    update: {},
+    create: {
+      name: 'therapy',
+      description: 'Specialized therapy sessions (group therapy, etc.)',
+      priority: 85 // High priority
+    }
+  });
+
+  await prisma.appointmentType.upsert({
+    where: { name: 'education' },
+    update: {},
+    create: {
+      name: 'education',
+      description: 'Educational classes, training sessions',
+      priority: 60 // Medium priority
+    }
+  });
+
+  console.log('Appointment types seeded successfully!');
 }
 
 

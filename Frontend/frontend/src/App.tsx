@@ -1,17 +1,24 @@
 import React, { useState } from 'react';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
+import Login from './components/Login';
+import Setup from './components/Setup';
 import ResidentsManagement from './components/ResidentsManagement';
 import QualificationsManagement from './components/QualificationsManagement';
 import ShiftsManagement from './components/ShiftsManagement';
+import AppointmentsManagement from './components/AppointmentsManagement';
+import ScheduleManagement from './components/ScheduleManagement';
 
-type TabType = 'residents' | 'qualifications' | 'shifts' | 'schedule';
+type TabType = 'residents' | 'qualifications' | 'shifts' | 'appointments' | 'schedule';
 
-function App() {
+const MainApp: React.FC = () => {
+  const { user, logout, requiresSetup, loading } = useAuth();
   const [activeTab, setActiveTab] = useState<TabType>('residents');
 
   const tabs = [
     { id: 'residents' as TabType, name: 'Residents', description: 'Manage resident information' },
     { id: 'qualifications' as TabType, name: 'Qualifications', description: 'Assign work qualifications' },
     { id: 'shifts' as TabType, name: 'Shifts', description: 'Configure work shifts' },
+    { id: 'appointments' as TabType, name: 'Appointments', description: 'Schedule counseling & appointments' },
     { id: 'schedule' as TabType, name: 'Schedule', description: 'Generate work schedules' },
   ];
 
@@ -23,17 +30,30 @@ function App() {
         return <QualificationsManagement />;
       case 'shifts':
         return <ShiftsManagement />;
+      case 'appointments':
+        return <AppointmentsManagement />;
       case 'schedule':
-        return (
-          <div className="text-center py-12">
-            <h2 className="text-2xl font-bold text-gray-900 mb-4">Schedule Generator</h2>
-            <p className="text-gray-600">Coming soon - auto-generate work schedules</p>
-          </div>
-        );
+        return <ScheduleManagement />;
       default:
         return null;
     }
   };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-lg">Loading...</div>
+      </div>
+    );
+  }
+
+  if (requiresSetup) {
+    return <Setup />;
+  }
+
+  if (!user) {
+    return <Login />;
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -49,13 +69,24 @@ function App() {
                 Work scheduling management system
               </p>
             </div>
-            <div className="text-sm text-gray-500">
-              {new Date().toLocaleDateString('en-US', { 
-                weekday: 'long', 
-                year: 'numeric', 
-                month: 'long', 
-                day: 'numeric' 
-              })}
+            <div className="flex items-center space-x-4">
+              <div className="text-sm text-gray-500">
+                {new Date().toLocaleDateString('en-US', { 
+                  weekday: 'long', 
+                  year: 'numeric', 
+                  month: 'long', 
+                  day: 'numeric' 
+                })}
+              </div>
+              <div className="text-sm text-gray-600">
+                Welcome, {user.username}
+              </div>
+              <button
+                onClick={logout}
+                className="text-sm text-red-600 hover:text-red-900"
+              >
+                Sign Out
+              </button>
             </div>
           </div>
         </div>
@@ -102,6 +133,15 @@ function App() {
         </div>
       </footer>
     </div>
+  );
+};
+
+// Main App wrapper with AuthProvider
+function App() {
+  return (
+    <AuthProvider>
+      <MainApp />
+    </AuthProvider>
   );
 }
 

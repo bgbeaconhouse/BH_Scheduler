@@ -1,3 +1,6 @@
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
+import rateLimit from 'express-rate-limit';
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -17,6 +20,238 @@ app.use(express.json());
 app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', timestamp: new Date().toISOString() });
 });
+
+
+// Add rate limiting for login attempts
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // Limit each IP to 5 requests per windowMs
+  message: 'Too many login attempts, please try again later',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// JWT verification middleware
+const authenticateToken = (req: any, res: any, next: any) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
+
+  if (!token) {
+    return res.status(401).json({ error: 'Access token required' });
+  }
+
+  jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret', (err: any, user: any) => {
+    if (err) {
+      return res.status(403).json({ error: 'Invalid or expired token' });
+    }
+    req.user = user;
+    next();
+  });
+};
+
+// Add these routes to your server.ts (before other routes):
+
+// Auth routes
+app.post('/api/auth/login', loginLimiter, async (req: any, res: any) => {
+  try {
+    const { username, password } = req.body;
+    
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Username and password are required' });
+    }
+
+    // Check if this is the initial setup (no admin user exists)
+    const adminExists = await prisma.systemSetting.findUnique({
+      where: { key: 'admin_setup_complete' }
+    });
+
+    if (!adminExists) {
+      return res.status(400).json({ 
+        error: 'System not initialized',
+        requiresSetup: true 
+      });
+    }
+
+    // Get admin credentials from system settings
+    const [adminUsername, adminPasswordHash] = await Promise.all([
+      prisma.systemSetting.findUnique({ where: { key: 'admin_username' } }),
+      prisma.systemSetting.findUnique({ where: { key: 'admin_password_hash' } })
+    ]);
+
+    if (!adminUsername || !adminPasswordHash) {
+      return res.status(500).json({ error: 'Admin credentials not found' });
+    }
+
+    // Check username
+    if (username !== adminUsername.value) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    // Check password
+    const passwordValid = await bcrypt.compare(password, adminPasswordHash.value);
+    if (!passwordValid) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    // Generate JWT token
+    const token = jwt.sign(
+      { username: adminUsername.value, role: 'admin' },
+      process.env.JWT_SECRET || 'fallback_secret',
+      { expiresIn: '24h' }
+    );
+
+    res.json({
+      token,
+      user: {
+        username: adminUsername.value,
+        role: 'admin'
+      }
+    });
+
+  } catch (error: any) {
+    console.error('Login error:', error);
+    res.status(500).json({ error: 'Login failed' });
+  }
+});
+
+// Initial setup route (only works if no admin exists)
+app.post('/api/auth/setup', async (req: any, res: any) => {
+  try {
+    const { username, password } = req.body;
+    
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Username and password are required' });
+    }
+
+    if (password.length < 8) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    }
+
+    // Check if setup is already complete
+    const adminExists = await prisma.systemSetting.findUnique({
+      where: { key: 'admin_setup_complete' }
+    });
+
+    if (adminExists) {
+      return res.status(400).json({ error: 'System already initialized' });
+    }
+
+    // Hash password
+    const saltRounds = 12;
+    const passwordHash = await bcrypt.hash(password, saltRounds);
+
+    // Save admin credentials
+    await prisma.systemSetting.createMany({
+      data: [
+        { key: 'admin_username', value: username },
+        { key: 'admin_password_hash', value: passwordHash },
+        { key: 'admin_setup_complete', value: 'true' }
+      ]
+    });
+
+    // Generate initial token
+    const token = jwt.sign(
+      { username, role: 'admin' },
+      process.env.JWT_SECRET || 'fallback_secret',
+      { expiresIn: '24h' }
+    );
+
+    res.status(201).json({
+      token,
+      user: {
+        username,
+        role: 'admin'
+      },
+      message: 'Admin account created successfully'
+    });
+
+  } catch (error: any) {
+    console.error('Setup error:', error);
+    res.status(500).json({ error: 'Setup failed' });
+  }
+});
+
+// Check if setup is required
+app.get('/api/auth/setup-status', async (req: any, res: any) => {
+  try {
+    const adminExists = await prisma.systemSetting.findUnique({
+      where: { key: 'admin_setup_complete' }
+    });
+
+    res.json({
+      requiresSetup: !adminExists
+    });
+  } catch (error: any) {
+    console.error('Setup status error:', error);
+    res.status(500).json({ error: 'Failed to check setup status' });
+  }
+});
+
+// Verify token endpoint
+app.get('/api/auth/verify', authenticateToken, (req: any, res: any) => {
+  res.json({
+    valid: true,
+    user: req.user
+  });
+});
+
+// Change password
+app.post('/api/auth/change-password', authenticateToken, async (req: any, res: any) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: 'Current and new passwords are required' });
+    }
+
+    if (newPassword.length < 8) {
+      return res.status(400).json({ error: 'New password must be at least 8 characters' });
+    }
+
+    // Get current password hash
+    const adminPasswordHash = await prisma.systemSetting.findUnique({
+      where: { key: 'admin_password_hash' }
+    });
+
+    if (!adminPasswordHash) {
+      return res.status(500).json({ error: 'Admin credentials not found' });
+    }
+
+    // Verify current password
+    const passwordValid = await bcrypt.compare(currentPassword, adminPasswordHash.value);
+    if (!passwordValid) {
+      return res.status(401).json({ error: 'Current password is incorrect' });
+    }
+
+    // Hash new password
+    const saltRounds = 12;
+    const newPasswordHash = await bcrypt.hash(newPassword, saltRounds);
+
+    // Update password
+    await prisma.systemSetting.update({
+      where: { key: 'admin_password_hash' },
+      data: { value: newPasswordHash }
+    });
+
+    res.json({ message: 'Password changed successfully' });
+
+  } catch (error: any) {
+    console.error('Change password error:', error);
+    res.status(500).json({ error: 'Failed to change password' });
+  }
+});
+
+// Protect all other routes (add this AFTER the auth routes but BEFORE your existing routes)
+app.use('/api', (req: any, res: any, next: any) => {
+  // Skip auth for setup and login routes
+  if (req.path.startsWith('/auth/')) {
+    return next();
+  }
+  
+  // Apply authentication to all other API routes
+  authenticateToken(req, res, next);
+});
+
 
 // Residents routes
 app.get('/api/residents', async (req, res) => {
@@ -707,6 +942,710 @@ app.get('/api/shifts/:id', async (req: any, res: any) => {
     res.status(500).json({ error: 'Failed to fetch shift' });
   }
 });
+
+// Add these routes to your existing server.ts file (after the shifts routes)
+
+// Schedule generation and management routes
+app.get('/api/schedule-periods', async (req: any, res: any) => {
+  try {
+    const periods = await prisma.schedulePeriod.findMany({
+      include: {
+        assignments: {
+          include: {
+            shift: {
+              include: {
+                department: true,
+                roles: {
+                  include: {
+                    qualification: true
+                  }
+                }
+              }
+            },
+            resident: true
+          }
+        }
+      },
+      orderBy: {
+        startDate: 'desc'
+      }
+    });
+    res.json(periods);
+  } catch (error: any) {
+    console.error('Error fetching schedule periods:', error);
+    res.status(500).json({ error: 'Failed to fetch schedule periods' });
+  }
+});
+
+app.post('/api/schedule-periods', async (req: any, res: any) => {
+  try {
+    const { name, startDate, endDate } = req.body;
+    
+    if (!name || !startDate || !endDate) {
+      return res.status(400).json({ error: 'Name, start date, and end date are required' });
+    }
+
+    const period = await prisma.schedulePeriod.create({
+      data: {
+        name: name.trim(),
+        startDate: new Date(startDate),
+        endDate: new Date(endDate)
+      }
+    });
+    
+    res.status(201).json(period);
+  } catch (error: any) {
+    console.error('Error creating schedule period:', error);
+    res.status(500).json({ error: 'Failed to create schedule period' });
+  }
+});
+
+app.post('/api/generate-schedule', async (req: any, res: any) => {
+  try {
+    const { schedulePeriodId, startDate, endDate } = req.body;
+    
+    if (!schedulePeriodId || !startDate || !endDate) {
+      return res.status(400).json({ error: 'Schedule period ID, start date, and end date are required' });
+    }
+
+    // Clear existing assignments for this period
+    await prisma.shiftAssignment.deleteMany({
+      where: { schedulePeriodId: parseInt(schedulePeriodId) }
+    });
+
+    // Get all active shifts with their requirements
+    const shifts = await prisma.shift.findMany({
+      where: { isActive: true },
+      include: {
+        department: true,
+        roles: {
+          include: {
+            qualification: true
+          }
+        }
+      },
+      orderBy: [
+        { department: { priority: 'desc' } }, // Kitchen first (highest priority)
+        { startTime: 'asc' }
+      ]
+    });
+
+    // Get all active residents with their qualifications
+    const residents = await prisma.resident.findMany({
+      where: { isActive: true },
+      include: {
+        qualifications: {
+          where: { isActive: true },
+          include: {
+            qualification: true
+          }
+        },
+        appointments: {
+          where: {
+            startDateTime: {
+              gte: new Date(startDate),
+              lte: new Date(endDate)
+            },
+            isActive: true
+          },
+          include: {
+            appointmentType: true
+          }
+        },
+        availability: {
+          where: { isActive: true }
+        }
+      }
+    });
+
+    // Generate date range
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    const dates = [];
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+      dates.push(new Date(d));
+    }
+
+    const assignments: any[] = [];
+    const conflicts: any[] = [];
+    const usedResidents = new Set(); // Track residents assigned each day
+
+    // Process each date
+    for (const date of dates) {
+      const dayOfWeek = date.getDay(); // 0 = Sunday, 1 = Monday, etc.
+      const dayUsed = new Set(); // Track residents used on this specific day
+      
+      // Get shifts that run on this day
+      const dayShifts = shifts.filter(shift => {
+        const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+        return shift[days[dayOfWeek] as keyof typeof shift] === true;
+      });
+
+      // Process shifts by department priority
+      for (const shift of dayShifts) {
+        for (const role of shift.roles) {
+          for (let i = 0; i < role.requiredCount; i++) {
+            // Find eligible residents for this role
+            const eligibleResidents = residents.filter(resident => {
+              // Check if already assigned this day
+              if (dayUsed.has(resident.id)) return false;
+
+              // Check tenure requirement
+              if (shift.minTenureMonths > 0) {
+                const admissionDate = new Date(resident.admissionDate);
+                const monthsDiff = (date.getTime() - admissionDate.getTime()) / (1000 * 60 * 60 * 24 * 30.44);
+                if (monthsDiff < shift.minTenureMonths) return false;
+              }
+
+              // Check qualification requirement
+              if (role.qualificationId) {
+                const hasQualification = resident.qualifications.some(
+                  rq => rq.qualificationId === role.qualificationId
+                );
+                if (!hasQualification) return false;
+              }
+
+              // Check availability
+              const dayAvailability = resident.availability.find(a => a.dayOfWeek === dayOfWeek);
+              if (!dayAvailability) return false;
+
+              const shiftStart = new Date(`2000-01-01T${shift.startTime}:00`);
+              const shiftEnd = new Date(`2000-01-01T${shift.endTime}:00`);
+              const availStart = new Date(`2000-01-01T${dayAvailability.startTime}:00`);
+              const availEnd = new Date(`2000-01-01T${dayAvailability.endTime}:00`);
+
+              if (shiftStart < availStart || shiftEnd > availEnd) return false;
+
+              // Check appointment conflicts
+              const shiftDateTime = new Date(date);
+              const shiftStartTime = new Date(date);
+              const shiftEndTime = new Date(date);
+              shiftStartTime.setHours(parseInt(shift.startTime.split(':')[0]), parseInt(shift.startTime.split(':')[1]));
+              shiftEndTime.setHours(parseInt(shift.endTime.split(':')[0]), parseInt(shift.endTime.split(':')[1]));
+
+              const conflictingAppointments = resident.appointments.filter(apt => {
+                const aptStart = new Date(apt.startDateTime);
+                const aptEnd = new Date(apt.endDateTime);
+                const aptDate = new Date(aptStart.getFullYear(), aptStart.getMonth(), aptStart.getDate());
+                const currentDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+                
+                if (aptDate.getTime() !== currentDate.getTime()) return false;
+
+                // Check different types of conflicts
+                if (shift.blocksCounselingOnly && apt.appointmentType.name === 'counseling') return true;
+                if (shift.blocksAllAppointments) return true;
+                
+                // Time overlap check for other appointments
+                return (aptStart < shiftEndTime && aptEnd > shiftStartTime);
+              });
+
+              return conflictingAppointments.length === 0;
+            });
+
+            // Assign best candidate
+            if (eligibleResidents.length > 0) {
+              // Prefer residents with fewer existing assignments (load balancing)
+              const sortedCandidates = eligibleResidents.sort((a, b) => {
+                const aAssignments = assignments.filter(assign => assign.residentId === a.id).length;
+                const bAssignments = assignments.filter(assign => assign.residentId === b.id).length;
+                return aAssignments - bAssignments;
+              });
+
+              const selectedResident = sortedCandidates[0];
+              
+              assignments.push({
+                schedulePeriodId: parseInt(schedulePeriodId),
+                shiftId: shift.id,
+                residentId: selectedResident.id,
+                assignedDate: date,
+                roleTitle: role.roleTitle,
+                status: 'scheduled'
+              });
+
+              dayUsed.add(selectedResident.id);
+            } else {
+              // Record conflict - no eligible residents
+              conflicts.push({
+                residentId: 0, // Use 0 instead of null
+                conflictDate: date,
+                conflictType: 'no_eligible_residents',
+                description: `No eligible residents for ${shift.name} - ${role.roleTitle}`,
+                severity: 'error'
+              });
+            }
+          }
+        }
+      }
+    }
+
+    // Bulk create assignments
+    if (assignments.length > 0) {
+      await prisma.shiftAssignment.createMany({
+        data: assignments
+      });
+    }
+
+    // Create conflict records
+    if (conflicts.length > 0) {
+      await prisma.scheduleConflict.createMany({
+        data: conflicts
+      });
+    }
+
+    // Return results
+    const period = await prisma.schedulePeriod.findUnique({
+      where: { id: parseInt(schedulePeriodId) },
+      include: {
+        assignments: {
+          include: {
+            shift: {
+              include: {
+                department: true
+              }
+            },
+            resident: true
+          }
+        }
+      }
+    });
+
+    res.json({
+      success: true,
+      period,
+      stats: {
+        assignmentsCreated: assignments.length,
+        conflictsFound: conflicts.length
+      }
+    });
+
+  } catch (error: any) {
+    console.error('Error generating schedule:', error);
+    res.status(500).json({ error: 'Failed to generate schedule' });
+  }
+});
+
+app.get('/api/schedule-periods/:id/assignments', async (req: any, res: any) => {
+  try {
+    const { id } = req.params;
+    const assignments = await prisma.shiftAssignment.findMany({
+      where: { schedulePeriodId: parseInt(id) },
+      include: {
+        shift: {
+          include: {
+            department: true
+          }
+        },
+        resident: true
+      },
+      orderBy: [
+        { assignedDate: 'asc' },
+        { shift: { startTime: 'asc' } }
+      ]
+    });
+    res.json(assignments);
+  } catch (error: any) {
+    console.error('Error fetching assignments:', error);
+    res.status(500).json({ error: 'Failed to fetch assignments' });
+  }
+});
+
+app.get('/api/schedule-periods/:id/conflicts', async (req: any, res: any) => {
+  try {
+    const { id } = req.params;
+    const start = new Date(req.query.startDate as string);
+    const end = new Date(req.query.endDate as string);
+    
+    const conflicts = await prisma.scheduleConflict.findMany({
+      where: {
+        conflictDate: {
+          gte: start,
+          lte: end
+        }
+      },
+      orderBy: {
+        conflictDate: 'asc'
+      }
+    });
+    res.json(conflicts);
+  } catch (error: any) {
+    console.error('Error fetching conflicts:', error);
+    res.status(500).json({ error: 'Failed to fetch conflicts' });
+  }
+});
+
+app.put('/api/shift-assignments/:id', async (req: any, res: any) => {
+  try {
+    const { id } = req.params;
+    const { residentId, roleTitle, notes, status } = req.body;
+    
+    const assignment = await prisma.shiftAssignment.update({
+      where: { id: parseInt(id) },
+      data: {
+        residentId: residentId ? parseInt(residentId) : undefined,
+        roleTitle,
+        notes,
+        status
+      },
+      include: {
+        shift: {
+          include: {
+            department: true
+          }
+        },
+        resident: true
+      }
+    });
+    
+    res.json(assignment);
+  } catch (error: any) {
+    console.error('Error updating assignment:', error);
+    if (error.code === 'P2025') {
+      res.status(404).json({ error: 'Assignment not found' });
+    } else {
+      res.status(500).json({ error: 'Failed to update assignment' });
+    }
+  }
+});
+
+app.delete('/api/shift-assignments/:id', async (req: any, res: any) => {
+  try {
+    const { id } = req.params;
+    
+    await prisma.shiftAssignment.delete({
+      where: { id: parseInt(id) }
+    });
+    
+    res.json({ message: 'Assignment deleted successfully' });
+  } catch (error: any) {
+    console.error('Error deleting assignment:', error);
+    if (error.code === 'P2025') {
+      res.status(404).json({ error: 'Assignment not found' });
+    } else {
+      res.status(500).json({ error: 'Failed to delete assignment' });
+    }
+  }
+});
+
+// Add these routes to your existing server.ts file (after the schedule routes)
+
+// Appointment Types routes
+app.get('/api/appointment-types', async (req: any, res: any) => {
+  try {
+    const types = await prisma.appointmentType.findMany({
+      include: {
+        appointments: {
+          where: { isActive: true }
+        }
+      },
+      orderBy: {
+        priority: 'desc'
+      }
+    });
+    res.json(types);
+  } catch (error: any) {
+    console.error('Error fetching appointment types:', error);
+    res.status(500).json({ error: 'Failed to fetch appointment types' });
+  }
+});
+
+app.post('/api/appointment-types', async (req: any, res: any) => {
+  try {
+    const { name, description, priority } = req.body;
+    
+    if (!name) {
+      return res.status(400).json({ error: 'Name is required' });
+    }
+
+    const type = await prisma.appointmentType.create({
+      data: {
+        name: name.trim(),
+        description: description?.trim() || null,
+        priority: priority || 0
+      }
+    });
+    
+    res.status(201).json(type);
+  } catch (error: any) {
+    console.error('Error creating appointment type:', error);
+    if (error.code === 'P2002') {
+      res.status(400).json({ error: 'Appointment type name already exists' });
+    } else {
+      res.status(500).json({ error: 'Failed to create appointment type' });
+    }
+  }
+});
+
+// Appointments routes
+app.get('/api/appointments', async (req: any, res: any) => {
+  try {
+    const { residentId, startDate, endDate } = req.query;
+    
+    const where: any = { isActive: true };
+    
+    if (residentId) {
+      where.residentId = parseInt(residentId as string);
+    }
+    
+    if (startDate && endDate) {
+      where.startDateTime = {
+        gte: new Date(startDate as string),
+        lte: new Date(endDate as string)
+      };
+    }
+
+    const appointments = await prisma.appointment.findMany({
+      where,
+      include: {
+        resident: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true
+          }
+        },
+        appointmentType: true
+      },
+      orderBy: [
+        { startDateTime: 'asc' }
+      ]
+    });
+    
+    res.json(appointments);
+  } catch (error: any) {
+    console.error('Error fetching appointments:', error);
+    res.status(500).json({ error: 'Failed to fetch appointments' });
+  }
+});
+
+app.post('/api/appointments', async (req: any, res: any) => {
+  try {
+    const { 
+      residentId, 
+      appointmentTypeId, 
+      title, 
+      startDateTime, 
+      endDateTime,
+      isRecurring,
+      recurringPattern,
+      notes 
+    } = req.body;
+    
+    if (!residentId || !appointmentTypeId || !title || !startDateTime || !endDateTime) {
+      return res.status(400).json({ error: 'Resident, appointment type, title, start time, and end time are required' });
+    }
+
+    // Check for overlapping appointments
+    const overlapping = await prisma.appointment.findFirst({
+      where: {
+        residentId: parseInt(residentId),
+        isActive: true,
+        OR: [
+          {
+            startDateTime: {
+              lt: new Date(endDateTime)
+            },
+            endDateTime: {
+              gt: new Date(startDateTime)
+            }
+          }
+        ]
+      }
+    });
+
+    if (overlapping) {
+      return res.status(400).json({ error: 'Appointment overlaps with existing appointment' });
+    }
+
+    const appointment = await prisma.appointment.create({
+      data: {
+        residentId: parseInt(residentId),
+        appointmentTypeId: parseInt(appointmentTypeId),
+        title: title.trim(),
+        startDateTime: new Date(startDateTime),
+        endDateTime: new Date(endDateTime),
+        isRecurring: isRecurring || false,
+        recurringPattern: recurringPattern?.trim() || null,
+        notes: notes?.trim() || null
+      },
+      include: {
+        resident: {
+          select: {
+            firstName: true,
+            lastName: true
+          }
+        },
+        appointmentType: true
+      }
+    });
+    
+    res.status(201).json(appointment);
+  } catch (error: any) {
+    console.error('Error creating appointment:', error);
+    res.status(500).json({ error: 'Failed to create appointment' });
+  }
+});
+
+app.put('/api/appointments/:id', async (req: any, res: any) => {
+  try {
+    const { id } = req.params;
+    const { 
+      residentId, 
+      appointmentTypeId, 
+      title, 
+      startDateTime, 
+      endDateTime,
+      isRecurring,
+      recurringPattern,
+      notes 
+    } = req.body;
+    
+    if (!residentId || !appointmentTypeId || !title || !startDateTime || !endDateTime) {
+      return res.status(400).json({ error: 'Resident, appointment type, title, start time, and end time are required' });
+    }
+
+    // Check for overlapping appointments (excluding current appointment)
+    const overlapping = await prisma.appointment.findFirst({
+      where: {
+        residentId: parseInt(residentId),
+        isActive: true,
+        id: { not: parseInt(id) },
+        OR: [
+          {
+            startDateTime: {
+              lt: new Date(endDateTime)
+            },
+            endDateTime: {
+              gt: new Date(startDateTime)
+            }
+          }
+        ]
+      }
+    });
+
+    if (overlapping) {
+      return res.status(400).json({ error: 'Appointment overlaps with existing appointment' });
+    }
+
+    const appointment = await prisma.appointment.update({
+      where: { id: parseInt(id) },
+      data: {
+        residentId: parseInt(residentId),
+        appointmentTypeId: parseInt(appointmentTypeId),
+        title: title.trim(),
+        startDateTime: new Date(startDateTime),
+        endDateTime: new Date(endDateTime),
+        isRecurring: isRecurring || false,
+        recurringPattern: recurringPattern?.trim() || null,
+        notes: notes?.trim() || null
+      },
+      include: {
+        resident: {
+          select: {
+            firstName: true,
+            lastName: true
+          }
+        },
+        appointmentType: true
+      }
+    });
+    
+    res.json(appointment);
+  } catch (error: any) {
+    console.error('Error updating appointment:', error);
+    if (error.code === 'P2025') {
+      res.status(404).json({ error: 'Appointment not found' });
+    } else {
+      res.status(500).json({ error: 'Failed to update appointment' });
+    }
+  }
+});
+
+app.delete('/api/appointments/:id', async (req: any, res: any) => {
+  try {
+    const { id } = req.params;
+    
+    // Soft delete - set isActive to false
+    const appointment = await prisma.appointment.update({
+      where: { id: parseInt(id) },
+      data: { isActive: false }
+    });
+    
+    res.json({ message: 'Appointment deleted successfully', appointment });
+  } catch (error: any) {
+    console.error('Error deleting appointment:', error);
+    if (error.code === 'P2025') {
+      res.status(404).json({ error: 'Appointment not found' });
+    } else {
+      res.status(500).json({ error: 'Failed to delete appointment' });
+    }
+  }
+});
+
+// Bulk create recurring appointments
+app.post('/api/appointments/bulk-recurring', async (req: any, res: any) => {
+  try {
+    const { 
+      residentId, 
+      appointmentTypeId, 
+      title, 
+      startTime, 
+      endTime,
+      daysOfWeek, // Array of day numbers (0=Sunday, 1=Monday, etc.)
+      startDate,
+      endDate,
+      notes 
+    } = req.body;
+    
+    if (!residentId || !appointmentTypeId || !title || !startTime || !endTime || !daysOfWeek || !startDate || !endDate) {
+      return res.status(400).json({ error: 'All fields are required for recurring appointments' });
+    }
+
+    const appointments = [];
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    
+    // Generate all dates in the range
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+      if (daysOfWeek.includes(d.getDay())) {
+        const appointmentDate = new Date(d);
+        const [startHour, startMinute] = startTime.split(':');
+        const [endHour, endMinute] = endTime.split(':');
+        
+        const startDateTime = new Date(appointmentDate);
+        startDateTime.setHours(parseInt(startHour), parseInt(startMinute), 0, 0);
+        
+        const endDateTime = new Date(appointmentDate);
+        endDateTime.setHours(parseInt(endHour), parseInt(endMinute), 0, 0);
+        
+        appointments.push({
+          residentId: parseInt(residentId),
+          appointmentTypeId: parseInt(appointmentTypeId),
+          title: title.trim(),
+          startDateTime,
+          endDateTime,
+          isRecurring: true,
+          recurringPattern: `Weekly on ${daysOfWeek.map((d: number) => ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d]).join(', ')}`,
+          notes: notes?.trim() || null
+        });
+      }
+    }
+
+    if (appointments.length > 0) {
+      await prisma.appointment.createMany({
+        data: appointments
+      });
+    }
+    
+    res.status(201).json({ 
+      message: 'Recurring appointments created successfully',
+      count: appointments.length 
+    });
+  } catch (error: any) {
+    console.error('Error creating recurring appointments:', error);
+    res.status(500).json({ error: 'Failed to create recurring appointments' });
+  }
+});
+
 
 // Error handling middleware
 app.use((error: any, req: express.Request, res: express.Response, next: express.NextFunction) => {

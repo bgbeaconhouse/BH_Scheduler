@@ -9,10 +9,31 @@ export const api = axios.create({
   },
 });
 
+// Add request interceptor to include auth token
+api.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem('auth_token');
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+  },
+  (error) => {
+    return Promise.reject(error);
+  }
+);
+
 // Add response interceptor for better error handling
 api.interceptors.response.use(
   (response) => response,
   (error) => {
+    if (error.response?.status === 401) {
+      // Token expired or invalid
+      localStorage.removeItem('auth_token');
+      window.location.href = '/login';
+      return Promise.reject(new Error('Session expired. Please log in again.'));
+    }
+    
     if (error.response?.data?.error) {
       // Return the server error message
       return Promise.reject(new Error(error.response.data.error));
@@ -135,6 +156,82 @@ export const shiftsApi = {
     }>;
   }) => api.put(`/shifts/${id}`, data),
   delete: (id: number) => api.delete(`/shifts/${id}`),
+};
+
+// Appointment Types API calls
+export const appointmentTypesApi = {
+  getAll: () => api.get('/appointment-types'),
+  create: (data: {
+    name: string;
+    description?: string;
+    priority?: number;
+  }) => api.post('/appointment-types', data),
+};
+
+// Appointments API calls
+export const appointmentsApi = {
+  getAll: (params?: {
+    residentId?: number;
+    startDate?: string;
+    endDate?: string;
+  }) => api.get('/appointments', { params }),
+  create: (data: {
+    residentId: number;
+    appointmentTypeId: number;
+    title: string;
+    startDateTime: string;
+    endDateTime: string;
+    isRecurring?: boolean;
+    recurringPattern?: string;
+    notes?: string;
+  }) => api.post('/appointments', data),
+  update: (id: number, data: {
+    residentId: number;
+    appointmentTypeId: number;
+    title: string;
+    startDateTime: string;
+    endDateTime: string;
+    isRecurring?: boolean;
+    recurringPattern?: string;
+    notes?: string;
+  }) => api.put(`/appointments/${id}`, data),
+  delete: (id: number) => api.delete(`/appointments/${id}`),
+  createRecurring: (data: {
+    residentId: number;
+    appointmentTypeId: number;
+    title: string;
+    startTime: string;
+    endTime: string;
+    daysOfWeek: number[];
+    startDate: string;
+    endDate: string;
+    notes?: string;
+  }) => api.post('/appointments/bulk-recurring', data),
+};
+
+// Schedule API calls
+export const scheduleApi = {
+  getPeriods: () => api.get('/schedule-periods'),
+  createPeriod: (data: {
+    name: string;
+    startDate: string;
+    endDate: string;
+  }) => api.post('/schedule-periods', data),
+  generateSchedule: (data: {
+    schedulePeriodId: number;
+    startDate: string;
+    endDate: string;
+  }) => api.post('/generate-schedule', data),
+  getAssignments: (periodId: number) => api.get(`/schedule-periods/${periodId}/assignments`),
+  getConflicts: (periodId: number, startDate: string, endDate: string) => 
+    api.get(`/schedule-periods/${periodId}/conflicts?startDate=${startDate}&endDate=${endDate}`),
+  updateAssignment: (id: number, data: {
+    residentId?: number;
+    roleTitle?: string;
+    notes?: string;
+    status?: string;
+  }) => api.put(`/shift-assignments/${id}`, data),
+  deleteAssignment: (id: number) => api.delete(`/shift-assignments/${id}`),
 };
 
 // Health check

@@ -1,4 +1,5 @@
 // Create this file as: backend/prisma/seed.ts
+/// <reference types="node" />
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();

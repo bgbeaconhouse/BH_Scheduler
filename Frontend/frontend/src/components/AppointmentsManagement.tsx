@@ -234,40 +234,64 @@ const AppointmentsManagement: React.FC = () => {
   };
 
 const handleEdit = (appointment: Appointment) => {
-  // Since the backend now stores times with Pacific offset already applied,
-  // we need to parse them as UTC but display them as the "local" time
-  const startDate = new Date(appointment.startDateTime);
-  const endDate = new Date(appointment.endDateTime);
+  console.log('=== COMPREHENSIVE EDIT DEBUG ===');
+  console.log('Raw appointment.startDateTime from API:', appointment.startDateTime);
+  console.log('Raw appointment.endDateTime from API:', appointment.endDateTime);
   
-  // Convert to local date/time strings for the form inputs
-  const formatDateForInput = (date: Date) => {
-    return date.toISOString().split('T')[0]; // YYYY-MM-DD
-  };
+  // Let's try different parsing approaches and see what they give us
+  const approach1 = new Date(appointment.startDateTime);
+  const approach2 = new Date(appointment.startDateTime.replace('Z', ''));
   
-  const formatTimeForInput = (date: Date) => {
-    return date.toISOString().split('T')[1].substring(0, 5); // HH:MM
-  };
+  console.log('Approach 1 - new Date(appointment.startDateTime):');
+  console.log('  toString():', approach1.toString());
+  console.log('  toISOString():', approach1.toISOString());
+  console.log('  getHours():', approach1.getHours());
   
-  console.log('=== EDIT DEBUG ===');
-  console.log('Stored startDateTime:', appointment.startDateTime);
-  console.log('Parsed as Date object:', startDate.toString());
-  console.log('Date for input field:', formatDateForInput(startDate));
-  console.log('Time for input field:', formatTimeForInput(startDate));
-  console.log('==================');
+  console.log('Approach 2 - new Date(appointment.startDateTime.replace("Z", "")):');
+  console.log('  toString():', approach2.toString());
+  console.log('  toISOString():', approach2.toISOString());
+  console.log('  getHours():', approach2.getHours());
   
-  setEditingAppointment(appointment);
-  setAppointmentForm({
-    residentId: appointment.residentId.toString(),
-    appointmentTypeId: appointment.appointmentTypeId.toString(),
-    title: appointment.title,
-    startDate: formatDateForInput(startDate),
-    startTime: formatTimeForInput(startDate),
-    endTime: formatTimeForInput(endDate),
-    isRecurring: false, // Don't support editing recurring appointments
-    recurringDays: [false, false, false, false, false, false, false],
-    recurringEndDate: '',
-    notes: appointment.notes || ''
-  });
+  // Let's also check what your DateUtils functions return
+  try {
+    const dateUtilsResult = DateUtils.fromLocalISOString(appointment.startDateTime);
+    console.log('DateUtils.fromLocalISOString result:');
+    console.log('  toString():', dateUtilsResult.toString());
+    console.log('  getHours():', dateUtilsResult.getHours());
+  } catch (e) {
+    console.log('DateUtils.fromLocalISOString error:', e);
+  }
+  
+  // For now, let's use a manual approach that should work
+  // We'll extract the date and time components directly
+  const isoString = appointment.startDateTime;
+  const dateMatch = isoString.match(/(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/);
+  
+  if (dateMatch) {
+    const [, datePart, timePart] = dateMatch;
+    console.log('Manual extraction:');
+    console.log('  Date part:', datePart);
+    console.log('  Time part:', timePart);
+    
+    // Use these directly
+    setEditingAppointment(appointment);
+    setAppointmentForm({
+      residentId: appointment.residentId.toString(),
+      appointmentTypeId: appointment.appointmentTypeId.toString(),
+      title: appointment.title,
+      startDate: datePart,
+      startTime: timePart,
+      endTime: appointment.endDateTime.match(/T(\d{2}:\d{2})/)?.[1] || '11:00',
+      isRecurring: false,
+      recurringDays: [false, false, false, false, false, false, false],
+      recurringEndDate: '',
+      notes: appointment.notes || ''
+    });
+  } else {
+    console.log('Could not parse date/time from:', isoString);
+  }
+  
+  console.log('================================');
   setShowForm(true);
 };
 

@@ -1627,6 +1627,7 @@ app.delete('/api/appointments/:id', async (req: any, res: any) => {
 });
 
 // Update the bulk recurring appointments route:
+// Update your bulk recurring appointments route in Backend/src/server.ts:
 app.post('/api/appointments/bulk-recurring', async (req: any, res: any) => {
   try {
     const { 
@@ -1645,19 +1646,42 @@ app.post('/api/appointments/bulk-recurring', async (req: any, res: any) => {
       return res.status(400).json({ error: 'All fields are required for recurring appointments' });
     }
 
+    // Same timezone adjustment function
+    function parsePacificTime(dateString: string): Date {
+      const cleanString = dateString.replace('Z', '');
+      const date = new Date(cleanString);
+      const pacificOffset = 7 * 60; // 7 hours in minutes for PDT
+      const adjustedDate = new Date(date.getTime() + (pacificOffset * 60 * 1000));
+      return adjustedDate;
+    }
+
     const appointments = [];
-    const start = parseAsLocalDate(startDate + 'T00:00:00');
-    const end = parseAsLocalDate(endDate + 'T23:59:59');
+    const start = new Date(startDate + 'T00:00:00');
+    const end = new Date(endDate + 'T23:59:59');
+    
+    console.log('=== RECURRING APPOINTMENTS DEBUG ===');
+    console.log('Creating recurring appointments from', startDate, 'to', endDate);
+    console.log('Time slot:', startTime, '-', endTime);
+    console.log('Days of week:', daysOfWeek);
     
     // Generate all dates in the range
     for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
       if (daysOfWeek.includes(d.getDay())) {
-        const appointmentDate = new Date(d);
-        const [startHour, startMinute] = startTime.split(':').map(Number);
-        const [endHour, endMinute] = endTime.split(':').map(Number);
+        // Create the appointment date/time string in local format
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
         
-        const startDateTime = new Date(appointmentDate.getFullYear(), appointmentDate.getMonth(), appointmentDate.getDate(), startHour, startMinute);
-        const endDateTime = new Date(appointmentDate.getFullYear(), appointmentDate.getMonth(), appointmentDate.getDate(), endHour, endMinute);
+        const startDateTimeString = `${year}-${month}-${day}T${startTime}:00`;
+        const endDateTimeString = `${year}-${month}-${day}T${endTime}:00`;
+        
+        // Apply timezone fix
+        const startDateTime = parsePacificTime(startDateTimeString);
+        const endDateTime = parsePacificTime(endDateTimeString);
+        
+        console.log(`Adding appointment for ${year}-${month}-${day}:`);
+        console.log(`  Local time: ${startTime} - ${endTime}`);
+        console.log(`  Storing as: ${startDateTime.toISOString()} - ${endDateTime.toISOString()}`);
         
         appointments.push({
           residentId: parseInt(residentId),
@@ -1671,6 +1695,9 @@ app.post('/api/appointments/bulk-recurring', async (req: any, res: any) => {
         });
       }
     }
+
+    console.log(`Total appointments to create: ${appointments.length}`);
+    console.log('===================================');
 
     if (appointments.length > 0) {
       await prisma.appointment.createMany({

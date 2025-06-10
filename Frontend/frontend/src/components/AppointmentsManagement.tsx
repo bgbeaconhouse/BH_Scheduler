@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { appointmentsApi, appointmentTypesApi, residentsApi } from '../api/client';
-import { DateUtils } from '../utils/dateutils';
+import { DateUtils } from '../utils/timeHelpers';
 
 interface Appointment {
   id: number;

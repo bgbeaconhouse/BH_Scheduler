@@ -51,6 +51,14 @@ const authenticateToken = (req: any, res: any, next: any) => {
 
 // Add these routes to your server.ts (before other routes):
 
+function parseAsLocalDate(dateString: string): Date {
+  // Remove any timezone indicators
+  const cleanDateString = dateString.replace('Z', '').replace(/\+.*$/, '');
+  
+  // Parse as local time by treating it as if it's in the local timezone
+  return new Date(cleanDateString);
+}
+
 // Auth routes
 app.post('/api/auth/login', loginLimiter, async (req: any, res: any) => {
   try {
@@ -1417,6 +1425,7 @@ app.get('/api/appointments', async (req: any, res: any) => {
   }
 });
 
+// Update your appointment creation route in server.ts:
 app.post('/api/appointments', async (req: any, res: any) => {
   try {
     const { 
@@ -1434,6 +1443,10 @@ app.post('/api/appointments', async (req: any, res: any) => {
       return res.status(400).json({ error: 'Resident, appointment type, title, start time, and end time are required' });
     }
 
+    // Parse dates as local time (no timezone conversion)
+    const startDate = parseAsLocalDate(startDateTime);
+    const endDate = parseAsLocalDate(endDateTime);
+
     // Check for overlapping appointments
     const overlapping = await prisma.appointment.findFirst({
       where: {
@@ -1442,10 +1455,10 @@ app.post('/api/appointments', async (req: any, res: any) => {
         OR: [
           {
             startDateTime: {
-              lt: new Date(endDateTime)
+              lt: endDate
             },
             endDateTime: {
-              gt: new Date(startDateTime)
+              gt: startDate
             }
           }
         ]
@@ -1461,8 +1474,8 @@ app.post('/api/appointments', async (req: any, res: any) => {
         residentId: parseInt(residentId),
         appointmentTypeId: parseInt(appointmentTypeId),
         title: title.trim(),
-        startDateTime: new Date(startDateTime),
-        endDateTime: new Date(endDateTime),
+        startDateTime: startDate,
+        endDateTime: endDate,
         isRecurring: isRecurring || false,
         recurringPattern: recurringPattern?.trim() || null,
         notes: notes?.trim() || null
@@ -1503,6 +1516,10 @@ app.put('/api/appointments/:id', async (req: any, res: any) => {
       return res.status(400).json({ error: 'Resident, appointment type, title, start time, and end time are required' });
     }
 
+    // Parse dates as local time (no timezone conversion)
+    const startDate = parseAsLocalDate(startDateTime);
+    const endDate = parseAsLocalDate(endDateTime);
+
     // Check for overlapping appointments (excluding current appointment)
     const overlapping = await prisma.appointment.findFirst({
       where: {
@@ -1512,10 +1529,10 @@ app.put('/api/appointments/:id', async (req: any, res: any) => {
         OR: [
           {
             startDateTime: {
-              lt: new Date(endDateTime)
+              lt: endDate
             },
             endDateTime: {
-              gt: new Date(startDateTime)
+              gt: startDate
             }
           }
         ]
@@ -1532,8 +1549,8 @@ app.put('/api/appointments/:id', async (req: any, res: any) => {
         residentId: parseInt(residentId),
         appointmentTypeId: parseInt(appointmentTypeId),
         title: title.trim(),
-        startDateTime: new Date(startDateTime),
-        endDateTime: new Date(endDateTime),
+        startDateTime: startDate,
+        endDateTime: endDate,
         isRecurring: isRecurring || false,
         recurringPattern: recurringPattern?.trim() || null,
         notes: notes?.trim() || null
@@ -1581,7 +1598,7 @@ app.delete('/api/appointments/:id', async (req: any, res: any) => {
   }
 });
 
-// Bulk create recurring appointments
+// Update the bulk recurring appointments route:
 app.post('/api/appointments/bulk-recurring', async (req: any, res: any) => {
   try {
     const { 
@@ -1590,7 +1607,7 @@ app.post('/api/appointments/bulk-recurring', async (req: any, res: any) => {
       title, 
       startTime, 
       endTime,
-      daysOfWeek, // Array of day numbers (0=Sunday, 1=Monday, etc.)
+      daysOfWeek, 
       startDate,
       endDate,
       notes 
@@ -1601,21 +1618,18 @@ app.post('/api/appointments/bulk-recurring', async (req: any, res: any) => {
     }
 
     const appointments = [];
-    const start = new Date(startDate);
-    const end = new Date(endDate);
+    const start = parseAsLocalDate(startDate + 'T00:00:00');
+    const end = parseAsLocalDate(endDate + 'T23:59:59');
     
     // Generate all dates in the range
     for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
       if (daysOfWeek.includes(d.getDay())) {
         const appointmentDate = new Date(d);
-        const [startHour, startMinute] = startTime.split(':');
-        const [endHour, endMinute] = endTime.split(':');
+        const [startHour, startMinute] = startTime.split(':').map(Number);
+        const [endHour, endMinute] = endTime.split(':').map(Number);
         
-        const startDateTime = new Date(appointmentDate);
-        startDateTime.setHours(parseInt(startHour), parseInt(startMinute), 0, 0);
-        
-        const endDateTime = new Date(appointmentDate);
-        endDateTime.setHours(parseInt(endHour), parseInt(endMinute), 0, 0);
+        const startDateTime = new Date(appointmentDate.getFullYear(), appointmentDate.getMonth(), appointmentDate.getDate(), startHour, startMinute);
+        const endDateTime = new Date(appointmentDate.getFullYear(), appointmentDate.getMonth(), appointmentDate.getDate(), endHour, endMinute);
         
         appointments.push({
           residentId: parseInt(residentId),

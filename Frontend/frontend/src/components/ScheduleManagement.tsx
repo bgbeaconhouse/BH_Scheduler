@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { scheduleApi, residentsApi } from '../api/client';
+import { scheduleApi } from '../api/client';
 
 interface SchedulePeriod {
   id: number;
@@ -43,18 +43,11 @@ interface Conflict {
   severity: string;
 }
 
-interface Resident {
-  id: number;
-  firstName: string;
-  lastName: string;
-}
-
 const ScheduleManagement: React.FC = () => {
   const [periods, setPeriods] = useState<SchedulePeriod[]>([]);
   const [selectedPeriod, setSelectedPeriod] = useState<SchedulePeriod | null>(null);
   const [assignments, setAssignments] = useState<ShiftAssignment[]>([]);
   const [conflicts, setConflicts] = useState<Conflict[]>([]);
-  const [residents, setResidents] = useState<Resident[]>([]);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string>('');
@@ -80,12 +73,8 @@ const ScheduleManagement: React.FC = () => {
 
   const fetchData = async () => {
     try {
-      const [periodsResponse, residentsResponse] = await Promise.all([
-        scheduleApi.getPeriods(),
-        residentsApi.getAll()
-      ]);
+      const periodsResponse = await scheduleApi.getPeriods();
       setPeriods(periodsResponse.data);
-      setResidents(residentsResponse.data);
     } catch (error: any) {
       console.error('Failed to fetch data:', error);
       setError('Failed to load data');

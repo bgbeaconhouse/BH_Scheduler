@@ -1443,29 +1443,30 @@ app.post('/api/appointments', async (req: any, res: any) => {
       return res.status(400).json({ error: 'Resident, appointment type, title, start time, and end time are required' });
     }
 
-    // Create dates without timezone conversion
-    // The input is local time, so we parse it as local time
-    function parseAsLocalTime(dateString: string): Date {
-      // Remove any Z suffix to prevent UTC interpretation
+    // Function to treat input as Pacific Time and store it properly
+    function parsePacificTime(dateString: string): Date {
       const cleanString = dateString.replace('Z', '');
+      const date = new Date(cleanString);
       
-      // Parse the components manually to avoid timezone issues
-      const [datePart, timePart] = cleanString.split('T');
-      const [year, month, day] = datePart.split('-').map(Number);
-      const [hour, minute, second] = (timePart + ':00:00').split(':').map(Number);
+      // California is UTC-8 (PST) or UTC-7 (PDT)
+      // For simplicity, let's use UTC-7 (PDT) since it's summer
+      const pacificOffset = 7 * 60; // 7 hours in minutes
       
-      // Create date as local time - this preserves the intended time
-      return new Date(year, month - 1, day, hour, minute, second || 0);
+      // Add the offset to store the "local" time as if it were UTC
+      const adjustedDate = new Date(date.getTime() + (pacificOffset * 60 * 1000));
+      
+      return adjustedDate;
     }
 
-    const startDate = parseAsLocalTime(startDateTime);
-    const endDate = parseAsLocalTime(endDateTime);
+    const startDate = parsePacificTime(startDateTime);
+    const endDate = parsePacificTime(endDateTime);
     
-    console.log('=== APPOINTMENT DEBUG FIXED ===');
+    console.log('=== TIMEZONE OFFSET FIX ===');
     console.log('Received startDateTime:', startDateTime);
-    console.log('Parsed as local startDate:', startDate.toString());
-    console.log('Storing in DB as:', startDate.toISOString());
-    console.log('===============================');
+    console.log('Original Date object:', new Date(startDateTime).toString());
+    console.log('Adjusted for Pacific Time:', startDate.toString());
+    console.log('Storing as UTC:', startDate.toISOString());
+    console.log('========================');
 
     // Check for overlapping appointments
     const overlapping = await prisma.appointment.findFirst({

@@ -150,20 +150,28 @@ const AppointmentsManagement: React.FC = () => {
               `This is part of a recurring series and you've changed the recurring pattern.\n\nOK = Delete old series and create new one with new pattern\nCancel = Update only times/details (keep same days)`
             );
             
+            console.log('=== RECURRING PATTERN UPDATE ===');
+            console.log('Update choice:', updateChoice);
+            console.log('Selected days:', selectedDays);
+            console.log('Recurring end date:', appointmentForm.recurringEndDate);
+            
             if (updateChoice) {
               // Delete old series and create new one
               try {
+                console.log('Deleting old series...');
                 // First delete the old series
-                await appointmentsApi.deleteRecurringSeries(
+                const deleteResponse = await appointmentsApi.deleteRecurringSeries(
                   editingAppointment.recurringPattern,
                   editingAppointment.residentId
                 );
+                console.log('Delete response:', deleteResponse);
 
                 // Then create new recurring series starting from today
                 const today = new Date();
                 const todayStr = today.toISOString().split('T')[0];
                 
-                await appointmentsApi.createRecurring({
+                console.log('Creating new series...');
+                const createData = {
                   residentId: parseInt(appointmentForm.residentId),
                   appointmentTypeId: parseInt(appointmentForm.appointmentTypeId),
                   title: appointmentForm.title,
@@ -173,21 +181,29 @@ const AppointmentsManagement: React.FC = () => {
                   startDate: todayStr,
                   endDate: appointmentForm.recurringEndDate,
                   notes: appointmentForm.notes
-                });
+                };
+                console.log('Create data:', createData);
+                
+                const createResponse = await appointmentsApi.createRecurring(createData);
+                console.log('Create response:', createResponse);
 
                 // Close form and refresh appointments
+                console.log('Refreshing appointments...');
                 await fetchAppointments();
+                console.log('Resetting form...');
                 resetForm();
                 setError(`✅ Updated recurring series with new pattern. Old series deleted, new series created.`);
                 setTimeout(() => setError(''), 5000);
                 return; // Exit the function early
               } catch (error: any) {
+                console.error('Error in pattern update:', error);
                 throw new Error(error.message || 'Failed to update recurring pattern');
               }
             } else {
               // Just update times/details without changing pattern
               try {
-                const response = await appointmentsApi.updateRecurringSeries({
+                console.log('Updating series without pattern change...');
+                const updateData = {
                   recurringPattern: editingAppointment.recurringPattern,
                   residentId: editingAppointment.residentId,
                   appointmentTypeId: parseInt(appointmentForm.appointmentTypeId),
@@ -196,28 +212,39 @@ const AppointmentsManagement: React.FC = () => {
                   endTime: appointmentForm.endTime,
                   notes: appointmentForm.notes,
                   updateFutureOnly: true
-                });
+                };
+                console.log('Update data:', updateData);
+                
+                const response = await appointmentsApi.updateRecurringSeries(updateData);
+                console.log('Update response:', response);
                 
                 // Close form and refresh appointments
+                console.log('Refreshing appointments...');
                 await fetchAppointments();
+                console.log('Resetting form...');
                 resetForm();
                 setError(`✅ Updated ${response.data.updatedCount} appointments in recurring series (times/details only)`);
                 setTimeout(() => setError(''), 4000);
                 return; // Exit the function early
               } catch (error: any) {
+                console.error('Error in series update:', error);
                 throw new Error(error.message || 'Failed to update recurring series');
               }
             }
           } else {
             // No recurring pattern changes, just update the series normally
+            console.log('=== STANDARD SERIES UPDATE ===');
             const updateSeries = window.confirm(
               `This is part of a recurring series.\n\nOK = Update ALL future appointments in series\nCancel = Update only this single appointment`
             );
             
+            console.log('Update series choice:', updateSeries);
+            
             if (updateSeries) {
               // Update entire recurring series
               try {
-                const response = await appointmentsApi.updateRecurringSeries({
+                console.log('Updating entire series...');
+                const updateData = {
                   recurringPattern: editingAppointment.recurringPattern,
                   residentId: editingAppointment.residentId,
                   appointmentTypeId: parseInt(appointmentForm.appointmentTypeId),
@@ -226,19 +253,27 @@ const AppointmentsManagement: React.FC = () => {
                   endTime: appointmentForm.endTime,
                   notes: appointmentForm.notes,
                   updateFutureOnly: true
-                });
+                };
+                console.log('Update data:', updateData);
+                
+                const response = await appointmentsApi.updateRecurringSeries(updateData);
+                console.log('Series update response:', response);
                 
                 // Close form and refresh appointments
+                console.log('Refreshing appointments...');
                 await fetchAppointments();
+                console.log('Resetting form...');
                 resetForm();
                 setError(`✅ Updated ${response.data.updatedCount} appointments in recurring series`);
                 setTimeout(() => setError(''), 4000);
                 return; // Exit the function early
               } catch (error: any) {
+                console.error('Error updating series:', error);
                 throw new Error(error.message || 'Failed to update recurring series');
               }
             } else {
               // Update just this single appointment (existing logic)
+              console.log('Updating single appointment...');
               const startDateTime = DateUtils.createLocalDateTime(appointmentForm.startDate, appointmentForm.startTime);
               const endDateTime = DateUtils.createLocalDateTime(appointmentForm.startDate, appointmentForm.endTime);
               const startUTC = new Date(startDateTime.getTime() - (startDateTime.getTimezoneOffset() * 60000));
@@ -254,7 +289,9 @@ const AppointmentsManagement: React.FC = () => {
               });
               
               // Close form and refresh appointments
+              console.log('Refreshing appointments after single update...');
               await fetchAppointments();
+              console.log('Resetting form after single update...');
               resetForm();
               return; // Exit the function early
             }

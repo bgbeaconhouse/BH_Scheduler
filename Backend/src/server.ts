@@ -1518,7 +1518,6 @@ app.post('/api/appointments', async (req: any, res: any) => {
     res.status(500).json({ error: 'Failed to create appointment' });
   }
 });
-
 app.put('/api/appointments/:id', async (req: any, res: any) => {
   try {
     const { id } = req.params;
@@ -1537,16 +1536,30 @@ app.put('/api/appointments/:id', async (req: any, res: any) => {
       return res.status(400).json({ error: 'Resident, appointment type, title, start time, and end time are required' });
     }
 
-    function parseAsLocalTime(dateString: string): Date {
+    // Use the SAME function as in your create route
+    function parsePacificTime(dateString: string): Date {
       const cleanString = dateString.replace('Z', '');
-      const [datePart, timePart] = cleanString.split('T');
-      const [year, month, day] = datePart.split('-').map(Number);
-      const [hour, minute, second] = (timePart + ':00:00').split(':').map(Number);
-      return new Date(year, month - 1, day, hour, minute, second || 0);
+      const date = new Date(cleanString);
+      
+      // California is UTC-8 (PST) or UTC-7 (PDT)
+      // For simplicity, let's use UTC-7 (PDT) since it's summer
+      const pacificOffset = 7 * 60; // 7 hours in minutes
+      
+      // Add the offset to store the "local" time as if it were UTC
+      const adjustedDate = new Date(date.getTime() + (pacificOffset * 60 * 1000));
+      
+      return adjustedDate;
     }
 
-    const startDate = parseAsLocalTime(startDateTime);
-    const endDate = parseAsLocalTime(endDateTime);
+    const startDate = parsePacificTime(startDateTime);
+    const endDate = parsePacificTime(endDateTime);
+    
+    console.log('=== UPDATE TIMEZONE OFFSET FIX ===');
+    console.log('Received startDateTime:', startDateTime);
+    console.log('Original Date object:', new Date(startDateTime).toString());
+    console.log('Adjusted for Pacific Time:', startDate.toString());
+    console.log('Storing as UTC:', startDate.toISOString());
+    console.log('===============================');
 
     // Check for overlapping appointments (excluding current appointment)
     const overlapping = await prisma.appointment.findFirst({

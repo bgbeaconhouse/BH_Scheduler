@@ -175,8 +175,12 @@ const AppointmentsManagement: React.FC = () => {
                   notes: appointmentForm.notes
                 });
 
+                // Close form and refresh appointments
+                await fetchAppointments();
+                resetForm();
                 setError(`✅ Updated recurring series with new pattern. Old series deleted, new series created.`);
                 setTimeout(() => setError(''), 5000);
+                return; // Exit the function early
               } catch (error: any) {
                 throw new Error(error.message || 'Failed to update recurring pattern');
               }
@@ -194,8 +198,12 @@ const AppointmentsManagement: React.FC = () => {
                   updateFutureOnly: true
                 });
                 
+                // Close form and refresh appointments
+                await fetchAppointments();
+                resetForm();
                 setError(`✅ Updated ${response.data.updatedCount} appointments in recurring series (times/details only)`);
                 setTimeout(() => setError(''), 4000);
+                return; // Exit the function early
               } catch (error: any) {
                 throw new Error(error.message || 'Failed to update recurring series');
               }
@@ -220,8 +228,12 @@ const AppointmentsManagement: React.FC = () => {
                   updateFutureOnly: true
                 });
                 
+                // Close form and refresh appointments
+                await fetchAppointments();
+                resetForm();
                 setError(`✅ Updated ${response.data.updatedCount} appointments in recurring series`);
                 setTimeout(() => setError(''), 4000);
+                return; // Exit the function early
               } catch (error: any) {
                 throw new Error(error.message || 'Failed to update recurring series');
               }
@@ -240,6 +252,11 @@ const AppointmentsManagement: React.FC = () => {
                 endDateTime: endUTC.toISOString(),
                 notes: appointmentForm.notes
               });
+              
+              // Close form and refresh appointments
+              await fetchAppointments();
+              resetForm();
+              return; // Exit the function early
             }
           }
         } else {
@@ -303,6 +320,7 @@ const AppointmentsManagement: React.FC = () => {
         }
       }
       
+      // Only reach this point for non-recurring edits or new appointments
       await fetchAppointments();
       resetForm();
       if (!error.startsWith('✅')) {

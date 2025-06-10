@@ -233,25 +233,43 @@ const AppointmentsManagement: React.FC = () => {
     setError('');
   };
 
-  const handleEdit = (appointment: Appointment) => {
-    const startDate = DateUtils.fromLocalISOString(appointment.startDateTime);
-    const endDate = DateUtils.fromLocalISOString(appointment.endDateTime);
-    
-    setEditingAppointment(appointment);
-    setAppointmentForm({
-      residentId: appointment.residentId.toString(),
-      appointmentTypeId: appointment.appointmentTypeId.toString(),
-      title: appointment.title,
-      startDate: DateUtils.formatLocalDate(startDate),
-      startTime: DateUtils.formatLocalTime(startDate),
-      endTime: DateUtils.formatLocalTime(endDate),
-      isRecurring: false, // Don't support editing recurring appointments
-      recurringDays: [false, false, false, false, false, false, false],
-      recurringEndDate: '',
-      notes: appointment.notes || ''
-    });
-    setShowForm(true);
+const handleEdit = (appointment: Appointment) => {
+  // Since the backend now stores times with Pacific offset already applied,
+  // we need to parse them as UTC but display them as the "local" time
+  const startDate = new Date(appointment.startDateTime);
+  const endDate = new Date(appointment.endDateTime);
+  
+  // Convert to local date/time strings for the form inputs
+  const formatDateForInput = (date: Date) => {
+    return date.toISOString().split('T')[0]; // YYYY-MM-DD
   };
+  
+  const formatTimeForInput = (date: Date) => {
+    return date.toISOString().split('T')[1].substring(0, 5); // HH:MM
+  };
+  
+  console.log('=== EDIT DEBUG ===');
+  console.log('Stored startDateTime:', appointment.startDateTime);
+  console.log('Parsed as Date object:', startDate.toString());
+  console.log('Date for input field:', formatDateForInput(startDate));
+  console.log('Time for input field:', formatTimeForInput(startDate));
+  console.log('==================');
+  
+  setEditingAppointment(appointment);
+  setAppointmentForm({
+    residentId: appointment.residentId.toString(),
+    appointmentTypeId: appointment.appointmentTypeId.toString(),
+    title: appointment.title,
+    startDate: formatDateForInput(startDate),
+    startTime: formatTimeForInput(startDate),
+    endTime: formatTimeForInput(endDate),
+    isRecurring: false, // Don't support editing recurring appointments
+    recurringDays: [false, false, false, false, false, false, false],
+    recurringEndDate: '',
+    notes: appointment.notes || ''
+  });
+  setShowForm(true);
+};
 
   const getWeekDates = () => {
     if (!selectedWeek) return [];

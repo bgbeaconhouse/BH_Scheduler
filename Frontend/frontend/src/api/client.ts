@@ -169,6 +169,9 @@ export const appointmentTypesApi = {
 };
 
 // Appointments API calls
+// Add these new functions to your appointmentsApi object in client.ts
+// Replace your existing appointmentsApi with this updated version:
+
 export const appointmentsApi = {
   getAll: (params?: {
     residentId?: number;
@@ -207,6 +210,24 @@ export const appointmentsApi = {
     endDate: string;
     notes?: string;
   }) => api.post('/appointments/bulk-recurring', data),
+  
+  // NEW: Update entire recurring series
+  updateRecurringSeries: (data: {
+    recurringPattern: string;
+    residentId: number;
+    appointmentTypeId?: number;
+    title?: string;
+    startTime: string;
+    endTime: string;
+    notes?: string;
+    updateFutureOnly?: boolean;
+  }) => api.put('/appointments/recurring-series', data),
+  
+  // NEW: Delete entire recurring series
+  deleteRecurringSeries: (recurringPattern: string, residentId: number) =>
+    api.delete('/appointments/recurring-series', {
+      data: { recurringPattern, residentId }
+    })
 };
 
 // Schedule API calls

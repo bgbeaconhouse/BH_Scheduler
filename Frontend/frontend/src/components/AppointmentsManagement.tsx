@@ -134,46 +134,56 @@ const AppointmentsManagement: React.FC = () => {
     }
 
     try {
-      if (appointmentForm.isRecurring) {
-        // Create recurring appointments
-        const selectedDays = appointmentForm.recurringDays
-          .map((selected, index) => selected ? index : -1)
-          .filter(day => day !== -1);
+      if (editingAppointment) {
+        // EDITING EXISTING APPOINTMENT
+        if (editingAppointment.isRecurring && editingAppointment.recurringPattern) {
+          // This is a recurring appointment - ask user what to do
+          const updateSeries = window.confirm(
+            `This is part of a recurring series.\n\nOK = Update ALL future appointments in series\nCancel = Update only this single appointment`
+          );
+          
+          if (updateSeries) {
+            // Update entire recurring series
+            try {
+              const response = await appointmentsApi.updateRecurringSeries({
+                recurringPattern: editingAppointment.recurringPattern,
+                residentId: editingAppointment.residentId,
+                appointmentTypeId: parseInt(appointmentForm.appointmentTypeId),
+                title: appointmentForm.title,
+                startTime: appointmentForm.startTime,
+                endTime: appointmentForm.endTime,
+                notes: appointmentForm.notes,
+                updateFutureOnly: true
+              });
+              
+              setError(`✅ Updated ${response.data.updatedCount} appointments in recurring series`);
+              setTimeout(() => setError(''), 4000);
+            } catch (error: any) {
+              throw new Error(error.message || 'Failed to update recurring series');
+            }
+          } else {
+            // Update just this single appointment (existing logic)
+            const startDateTime = DateUtils.createLocalDateTime(appointmentForm.startDate, appointmentForm.startTime);
+            const endDateTime = DateUtils.createLocalDateTime(appointmentForm.startDate, appointmentForm.endTime);
+            const startUTC = new Date(startDateTime.getTime() - (startDateTime.getTimezoneOffset() * 60000));
+            const endUTC = new Date(endDateTime.getTime() - (endDateTime.getTimezoneOffset() * 60000));
 
-        if (selectedDays.length === 0) {
-          setError('Please select at least one day for recurring appointments');
-          return;
-        }
+            await appointmentsApi.update(editingAppointment.id, {
+              residentId: parseInt(appointmentForm.residentId),
+              appointmentTypeId: parseInt(appointmentForm.appointmentTypeId),
+              title: appointmentForm.title,
+              startDateTime: startUTC.toISOString(),
+              endDateTime: endUTC.toISOString(),
+              notes: appointmentForm.notes
+            });
+          }
+        } else {
+          // Regular single appointment update (existing logic)
+          const startDateTime = DateUtils.createLocalDateTime(appointmentForm.startDate, appointmentForm.startTime);
+          const endDateTime = DateUtils.createLocalDateTime(appointmentForm.startDate, appointmentForm.endTime);
+          const startUTC = new Date(startDateTime.getTime() - (startDateTime.getTimezoneOffset() * 60000));
+          const endUTC = new Date(endDateTime.getTime() - (endDateTime.getTimezoneOffset() * 60000));
 
-        if (!appointmentForm.recurringEndDate) {
-          setError('Please select an end date for recurring appointments');
-          return;
-        }
-
-        await appointmentsApi.createRecurring({
-          residentId: parseInt(appointmentForm.residentId),
-          appointmentTypeId: parseInt(appointmentForm.appointmentTypeId),
-          title: appointmentForm.title,
-          startTime: appointmentForm.startTime,
-          endTime: appointmentForm.endTime,
-          daysOfWeek: selectedDays,
-          startDate: appointmentForm.startDate,
-          endDate: appointmentForm.recurringEndDate,
-          notes: appointmentForm.notes
-        });
-      } else {
-        // Create single appointment - convert local time to UTC for storage
-        const startDateTime = DateUtils.createLocalDateTime(appointmentForm.startDate, appointmentForm.startTime);
-        const endDateTime = DateUtils.createLocalDateTime(appointmentForm.startDate, appointmentForm.endTime);
-
-        // Convert to UTC for backend storage
-        const startUTC = new Date(startDateTime.getTime() - (startDateTime.getTimezoneOffset() * 60000));
-        const endUTC = new Date(endDateTime.getTime() - (endDateTime.getTimezoneOffset() * 60000));
-
-        console.log('Local time:', startDateTime.toString());
-        console.log('Sending to backend:', startUTC.toISOString());
-
-        if (editingAppointment) {
           await appointmentsApi.update(editingAppointment.id, {
             residentId: parseInt(appointmentForm.residentId),
             appointmentTypeId: parseInt(appointmentForm.appointmentTypeId),
@@ -182,7 +192,41 @@ const AppointmentsManagement: React.FC = () => {
             endDateTime: endUTC.toISOString(),
             notes: appointmentForm.notes
           });
+        }
+      } else {
+        // CREATING NEW APPOINTMENT (existing logic)
+        if (appointmentForm.isRecurring) {
+          const selectedDays = appointmentForm.recurringDays
+            .map((selected, index) => selected ? index : -1)
+            .filter(day => day !== -1);
+
+          if (selectedDays.length === 0) {
+            setError('Please select at least one day for recurring appointments');
+            return;
+          }
+
+          if (!appointmentForm.recurringEndDate) {
+            setError('Please select an end date for recurring appointments');
+            return;
+          }
+
+          await appointmentsApi.createRecurring({
+            residentId: parseInt(appointmentForm.residentId),
+            appointmentTypeId: parseInt(appointmentForm.appointmentTypeId),
+            title: appointmentForm.title,
+            startTime: appointmentForm.startTime,
+            endTime: appointmentForm.endTime,
+            daysOfWeek: selectedDays,
+            startDate: appointmentForm.startDate,
+            endDate: appointmentForm.recurringEndDate,
+            notes: appointmentForm.notes
+          });
         } else {
+          const startDateTime = DateUtils.createLocalDateTime(appointmentForm.startDate, appointmentForm.startTime);
+          const endDateTime = DateUtils.createLocalDateTime(appointmentForm.startDate, appointmentForm.endTime);
+          const startUTC = new Date(startDateTime.getTime() - (startDateTime.getTimezoneOffset() * 60000));
+          const endUTC = new Date(endDateTime.getTime() - (endDateTime.getTimezoneOffset() * 60000));
+
           await appointmentsApi.create({
             residentId: parseInt(appointmentForm.residentId),
             appointmentTypeId: parseInt(appointmentForm.appointmentTypeId),
@@ -196,22 +240,75 @@ const AppointmentsManagement: React.FC = () => {
       
       await fetchAppointments();
       resetForm();
-      setError('');
+      if (!error.startsWith('✅')) {
+        setError('');
+      }
     } catch (error: any) {
       setError(error.message || 'Failed to save appointment');
     }
   };
 
-  const handleDelete = async (id: number) => {
-    if (!confirm('Are you sure you want to delete this appointment?')) {
-      return;
+  const handleDelete = async (appointment: Appointment) => {
+    if (appointment.isRecurring && appointment.recurringPattern) {
+      // For recurring appointments, offer series delete option
+      const deleteType = window.confirm(
+        `This is part of a recurring series.\n\nOK = Delete ENTIRE series (all future appointments)\nCancel = Delete only this one appointment`
+      );
+      
+      if (deleteType) {
+        // Delete entire series
+        if (window.confirm(`Delete ALL future appointments in this recurring series?\n\nThis will affect: ${appointment.resident.firstName} ${appointment.resident.lastName}'s recurring ${appointment.appointmentType.name} appointments.`)) {
+          try {
+            const response = await appointmentsApi.deleteRecurringSeries(
+              appointment.recurringPattern,
+              appointment.residentId
+            );
+            
+            await fetchAppointments();
+            setError(`✅ Deleted ${response.data.deletedCount} appointments from recurring series`);
+            setTimeout(() => setError(''), 4000);
+          } catch (error: any) {
+            setError('❌ Failed to delete recurring series');
+          }
+        }
+      } else {
+        // Delete just this one appointment
+        if (window.confirm('Delete only this single appointment?')) {
+          try {
+            await appointmentsApi.delete(appointment.id);
+            await fetchAppointments();
+          } catch (error: any) {
+            setError(error.message || 'Failed to delete appointment');
+          }
+        }
+      }
+    } else {
+      // Regular single appointment
+      if (window.confirm('Are you sure you want to delete this appointment?')) {
+        try {
+          await appointmentsApi.delete(appointment.id);
+          await fetchAppointments();
+        } catch (error: any) {
+          setError(error.message || 'Failed to delete appointment');
+        }
+      }
     }
+  };
 
-    try {
-      await appointmentsApi.delete(id);
-      await fetchAppointments();
-    } catch (error: any) {
-      setError(error.message || 'Failed to delete appointment');
+  // Helper function for quick series operations
+  const handleDeleteRecurringSeries = async (appointment: Appointment) => {
+    if (window.confirm(`Delete ALL future appointments in this recurring series?\n\nThis will affect ${appointment.resident.firstName} ${appointment.resident.lastName}'s recurring ${appointment.appointmentType.name} appointments.`)) {
+      try {
+        const response = await appointmentsApi.deleteRecurringSeries(
+          appointment.recurringPattern!,
+          appointment.residentId
+        );
+        await fetchAppointments();
+        setError(`✅ Deleted ${response.data.deletedCount} appointments from recurring series`);
+        setTimeout(() => setError(''), 4000);
+      } catch (error: any) {
+        setError('❌ Failed to delete recurring series');
+      }
     }
   };
 
@@ -233,49 +330,49 @@ const AppointmentsManagement: React.FC = () => {
     setError('');
   };
 
-const handleEdit = (appointment: Appointment) => {
-  // Use proper UTC to local conversion - this is the correct approach!
-  const startDate = new Date(appointment.startDateTime);
-  const endDate = new Date(appointment.endDateTime);
-  
-  // Convert to local date and time strings for form inputs
-  const formatDateForInput = (date: Date) => {
-    // Get local date in YYYY-MM-DD format
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
+  const handleEdit = (appointment: Appointment) => {
+    // Use proper UTC to local conversion - this is the correct approach!
+    const startDate = new Date(appointment.startDateTime);
+    const endDate = new Date(appointment.endDateTime);
+    
+    // Convert to local date and time strings for form inputs
+    const formatDateForInput = (date: Date) => {
+      // Get local date in YYYY-MM-DD format
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    };
+    
+    const formatTimeForInput = (date: Date) => {
+      // Get local time in HH:MM format
+      const hours = String(date.getHours()).padStart(2, '0');
+      const minutes = String(date.getMinutes()).padStart(2, '0');
+      return `${hours}:${minutes}`;
+    };
+    
+    console.log('=== EDIT SUCCESS ===');
+    console.log('Stored UTC time:', appointment.startDateTime);
+    console.log('Converted to local:', startDate.toString());
+    console.log('Form date field:', formatDateForInput(startDate));
+    console.log('Form time field:', formatTimeForInput(startDate));
+    console.log('====================');
+    
+    setEditingAppointment(appointment);
+    setAppointmentForm({
+      residentId: appointment.residentId.toString(),
+      appointmentTypeId: appointment.appointmentTypeId.toString(),
+      title: appointment.title,
+      startDate: formatDateForInput(startDate),
+      startTime: formatTimeForInput(startDate),
+      endTime: formatTimeForInput(endDate),
+      isRecurring: appointment.isRecurring,
+      recurringDays: [false, false, false, false, false, false, false],
+      recurringEndDate: '',
+      notes: appointment.notes || ''
+    });
+    setShowForm(true);
   };
-  
-  const formatTimeForInput = (date: Date) => {
-    // Get local time in HH:MM format
-    const hours = String(date.getHours()).padStart(2, '0');
-    const minutes = String(date.getMinutes()).padStart(2, '0');
-    return `${hours}:${minutes}`;
-  };
-  
-  console.log('=== EDIT SUCCESS ===');
-  console.log('Stored UTC time:', appointment.startDateTime);
-  console.log('Converted to local:', startDate.toString());
-  console.log('Form date field:', formatDateForInput(startDate));
-  console.log('Form time field:', formatTimeForInput(startDate));
-  console.log('====================');
-  
-  setEditingAppointment(appointment);
-  setAppointmentForm({
-    residentId: appointment.residentId.toString(),
-    appointmentTypeId: appointment.appointmentTypeId.toString(),
-    title: appointment.title,
-    startDate: formatDateForInput(startDate),
-    startTime: formatTimeForInput(startDate),
-    endTime: formatTimeForInput(endDate),
-    isRecurring: false, // Don't support editing recurring appointments
-    recurringDays: [false, false, false, false, false, false, false],
-    recurringEndDate: '',
-    notes: appointment.notes || ''
-  });
-  setShowForm(true);
-};
 
   const getWeekDates = () => {
     if (!selectedWeek) return [];
@@ -346,7 +443,7 @@ const handleEdit = (appointment: Appointment) => {
 
       {/* Error Message */}
       {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
+        <div className={`${error.startsWith('✅') ? 'bg-green-50 border-green-200 text-green-700' : 'bg-red-50 border-red-200 text-red-700'} border px-4 py-3 rounded-lg`}>
           {error}
         </div>
       )}
@@ -381,6 +478,19 @@ const handleEdit = (appointment: Appointment) => {
             <h3 className="text-lg font-semibold mb-4">
               {editingAppointment ? 'Edit Appointment' : 'Schedule New Appointment'}
             </h3>
+            
+            {/* Warning banner for recurring appointments */}
+            {editingAppointment?.isRecurring && (
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-4">
+                <div className="flex items-center space-x-2">
+                  <span className="text-yellow-600">⚠️</span>
+                  <span className="text-sm font-medium text-yellow-800">Editing Recurring Series</span>
+                </div>
+                <p className="text-sm text-yellow-700 mt-1">
+                  When you save, you'll be asked whether to update all future appointments in this recurring series or just this single appointment.
+                </p>
+              </div>
+            )}
             
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -627,14 +737,23 @@ const handleEdit = (appointment: Appointment) => {
                               onClick={() => handleEdit(appointment)}
                               className="text-blue-600 hover:text-blue-900 text-xs"
                             >
-                              Edit
+                              {appointment.isRecurring ? 'Edit Series' : 'Edit'}
                             </button>
                             <button
-                              onClick={() => handleDelete(appointment.id)}
+                              onClick={() => handleDelete(appointment)}
                               className="text-red-600 hover:text-red-900 text-xs"
                             >
                               Delete
                             </button>
+                            {appointment.isRecurring && appointment.recurringPattern && (
+                              <button
+                                onClick={() => handleDeleteRecurringSeries(appointment)}
+                                className="text-red-500 hover:text-red-700 text-xs underline"
+                                title="Delete entire recurring series"
+                              >
+                                Series
+                              </button>
+                            )}
                           </div>
                         </div>
                       ))
@@ -685,6 +804,8 @@ const handleEdit = (appointment: Appointment) => {
           <li>• <strong>Medical appointments</strong> allow temporary leave from most shifts</li>
           <li>• Use <strong>recurring appointments</strong> for regular counseling sessions</li>
           <li>• The schedule generator automatically respects these appointment conflicts</li>
+          <li>• <strong>Edit Series</strong> button updates all future appointments in a recurring series</li>
+          <li>• <strong>Series</strong> button quickly deletes all future appointments in a recurring series</li>
         </ul>
       </div>
     </div>

@@ -1729,6 +1729,227 @@ app.post('/api/appointments/bulk-recurring', async (req: any, res: any) => {
 });
 
 
+// Add these routes to your server.ts after the existing appointment routes
+
+// Update recurring appointment series
+app.put('/api/appointments/recurring-series', async (req: any, res: any) => {
+  try {
+    const { 
+      recurringPattern,
+      residentId,
+      appointmentTypeId,
+      title,
+      startTime,
+      endTime,
+      notes,
+      updateFutureOnly = true
+    } = req.body;
+    
+    if (!recurringPattern || !residentId) {
+      return res.status(400).json({ error: 'Recurring pattern and resident ID are required' });
+    }
+
+    // Find all appointments in this recurring series
+    const whereClause: any = {
+      residentId: parseInt(residentId),
+      recurringPattern: recurringPattern,
+      isRecurring: true,
+      isActive: true
+    };
+
+    if (updateFutureOnly) {
+      whereClause.startDateTime = {
+        gte: new Date() // Only update future appointments
+      };
+    }
+
+    // Get the appointments to see what we're updating
+    const appointmentsToUpdate = await prisma.appointment.findMany({
+      where: whereClause,
+      include: {
+        resident: { select: { firstName: true, lastName: true } },
+        appointmentType: true
+      }
+    });
+
+    if (appointmentsToUpdate.length === 0) {
+      return res.status(404).json({ error: 'No appointments found in this recurring series' });
+    }
+
+    // Update each appointment while preserving the date
+    const updatedAppointments = [];
+    
+    for (const appointment of appointmentsToUpdate) {
+      const appointmentDate = new Date(appointment.startDateTime);
+      const dateStr = appointmentDate.toISOString().split('T')[0]; // Get YYYY-MM-DD
+      
+      // Create new start and end times for this date using your timezone function
+      function parsePacificTime(dateString: string): Date {
+        const cleanString = dateString.replace('Z', '');
+        const date = new Date(cleanString);
+        const pacificOffset = 7 * 60; // 7 hours in minutes for PDT
+        const adjustedDate = new Date(date.getTime() + (pacificOffset * 60 * 1000));
+        return adjustedDate;
+      }
+      
+      const newStartDateTime = parsePacificTime(`${dateStr}T${startTime}:00`);
+      const newEndDateTime = parsePacificTime(`${dateStr}T${endTime}:00`);
+      
+      const updateData: any = {
+        startDateTime: newStartDateTime,
+        endDateTime: newEndDateTime
+      };
+
+      if (appointmentTypeId) updateData.appointmentTypeId = parseInt(appointmentTypeId);
+      if (title) updateData.title = title.trim();
+      if (notes !== undefined) updateData.notes = notes?.trim() || null;
+      
+      const updated = await prisma.appointment.update({
+        where: { id: appointment.id },
+        data: updateData,
+        include: {
+          resident: { select: { firstName: true, lastName: true } },
+          appointmentType: true
+        }
+      });
+      
+      updatedAppointments.push(updated);
+    }
+    
+    res.json({ 
+      message: `Updated ${updatedAppointments.length} appointments in recurring series`,
+      updatedCount: updatedAppointments.length,
+      appointments: updatedAppointments
+    });
+  } catch (error: any) {
+    console.error('Error updating recurring series:', error);
+    res.status(500).json({ error: 'Failed to update recurring series' });
+  }
+});
+
+// Delete recurring appointment series
+app.delete('/api/appointments/recurring-series', async (req: any, res: any) => {
+  try {
+    const { recurringPattern, residentId } = req.body;
+    
+    if (!recurringPattern || !residentId) {
+      return res.status(400).json({ error: 'Recurring pattern and resident ID are required' });
+    }
+    
+    // Delete future appointments in this series (soft delete)
+    const deletedAppointments = await prisma.appointment.updateMany({
+      where: {
+        residentId: parseInt(residentId),
+        recurringPattern: recurringPattern,
+        isRecurring: true,
+        startDateTime: {
+          gte: new Date() // Only future appointments
+        },
+        isActive: true
+      },
+      data: {
+        isActive: false
+      }
+    });
+    
+    res.json({ 
+      message: `Deleted ${deletedAppointments.count} future appointments from series`,
+      deletedCount: deletedAppointments.count 
+    });
+  } catch (error: any) {
+    console.error('Error deleting appointment series:', error);
+    res.status(500).json({ error: 'Failed to delete appointment series' });
+  }
+});
+
+// Update your existing bulk recurring creation to use unique patterns
+// Replace your existing /api/appointments/bulk-recurring route with this:
+app.post('/api/appointments/bulk-recurring', async (req: any, res: any) => {
+  try {
+    const { 
+      residentId, 
+      appointmentTypeId, 
+      title, 
+      startTime, 
+      endTime,
+      daysOfWeek, 
+      startDate,
+      endDate,
+      notes 
+    } = req.body;
+    
+    if (!residentId || !appointmentTypeId || !title || !startTime || !endTime || !daysOfWeek || !startDate || !endDate) {
+      return res.status(400).json({ error: 'All fields are required for recurring appointments' });
+    }
+
+    // Create a unique recurring pattern that includes timestamp for series identification
+    const seriesId = `weekly_${daysOfWeek.join('')}_${Date.now()}_${residentId}`;
+
+    function parsePacificTime(dateString: string): Date {
+      const cleanString = dateString.replace('Z', '');
+      const date = new Date(cleanString);
+      const pacificOffset = 7 * 60; // 7 hours in minutes for PDT
+      const adjustedDate = new Date(date.getTime() + (pacificOffset * 60 * 1000));
+      return adjustedDate;
+    }
+
+    const appointments = [];
+    const start = new Date(startDate + 'T00:00:00');
+    const end = new Date(endDate + 'T23:59:59');
+    
+    console.log('=== RECURRING APPOINTMENTS DEBUG ===');
+    console.log('Creating recurring appointments from', startDate, 'to', endDate);
+    console.log('Time slot:', startTime, '-', endTime);
+    console.log('Days of week:', daysOfWeek);
+    console.log('Series ID:', seriesId);
+    
+    // Generate all dates in the range
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+      if (daysOfWeek.includes(d.getDay())) {
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        
+        const startDateTimeString = `${year}-${month}-${day}T${startTime}:00`;
+        const endDateTimeString = `${year}-${month}-${day}T${endTime}:00`;
+        
+        const startDateTime = parsePacificTime(startDateTimeString);
+        const endDateTime = parsePacificTime(endDateTimeString);
+        
+        appointments.push({
+          residentId: parseInt(residentId),
+          appointmentTypeId: parseInt(appointmentTypeId),
+          title: title.trim(),
+          startDateTime,
+          endDateTime,
+          isRecurring: true,
+          recurringPattern: seriesId, // Use unique series ID
+          notes: notes?.trim() || null
+        });
+      }
+    }
+
+    console.log(`Total appointments to create: ${appointments.length}`);
+    console.log('===================================');
+
+    if (appointments.length > 0) {
+      await prisma.appointment.createMany({
+        data: appointments
+      });
+    }
+    
+    res.status(201).json({ 
+      message: 'Recurring appointments created successfully',
+      count: appointments.length,
+      seriesId: seriesId
+    });
+  } catch (error: any) {
+    console.error('Error creating recurring appointments:', error);
+    res.status(500).json({ error: 'Failed to create recurring appointments' });
+  }
+});
+
+
 // Error handling middleware
 app.use((error: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
   console.error('Unhandled error:', error);

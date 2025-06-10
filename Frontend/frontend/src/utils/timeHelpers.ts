@@ -1,16 +1,18 @@
-// Create frontend/src/utils/dateUtils.ts
+// Fixed Date Utility for Consistent Timezone Handling
 export class DateUtils {
   
   /**
    * Creates a date from local date and time strings (YYYY-MM-DD and HH:MM)
-   * Returns a Date object that represents the local time
+   * Returns a Date object that represents the local time WITHOUT timezone conversion
    */
   static createLocalDateTime(dateStr: string, timeStr: string): Date {
-    // Create date in local timezone to avoid UTC conversion
+    // Parse date components
     const [year, month, day] = dateStr.split('-').map(Number);
     const [hour, minute] = timeStr.split(':').map(Number);
     
-    return new Date(year, month - 1, day, hour, minute);
+    // Create date in local timezone - this stays as local time
+    const date = new Date(year, month - 1, day, hour, minute, 0, 0);
+    return date;
   }
 
   /**
@@ -33,7 +35,7 @@ export class DateUtils {
   }
 
   /**
-   * Formats a Date object to display time (e.g., "2:30 PM")
+   * Formats a Date object to display time (e.g., "8:30 AM")
    */
   static formatDisplayTime(date: Date): string {
     return date.toLocaleTimeString('en-US', {
@@ -54,18 +56,6 @@ export class DateUtils {
   }
 
   /**
-   * Formats a Date object to full display date (e.g., "Monday, June 10, 2025")
-   */
-  static formatFullDisplayDate(date: Date): string {
-    return date.toLocaleDateString('en-US', {
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric'
-    });
-  }
-
-  /**
    * Gets day name (e.g., "Mon", "Tue")
    */
   static getDayName(date: Date): string {
@@ -81,33 +71,6 @@ export class DateUtils {
       date1.getMonth() === date2.getMonth() &&
       date1.getDate() === date2.getDate()
     );
-  }
-
-  /**
-   * Gets the start of the day (00:00:00)
-   */
-  static startOfDay(date: Date): Date {
-    const newDate = new Date(date);
-    newDate.setHours(0, 0, 0, 0);
-    return newDate;
-  }
-
-  /**
-   * Gets the end of the day (23:59:59)
-   */
-  static endOfDay(date: Date): Date {
-    const newDate = new Date(date);
-    newDate.setHours(23, 59, 59, 999);
-    return newDate;
-  }
-
-  /**
-   * Calculates months between two dates (for tenure calculation)
-   */
-  static monthsBetween(startDate: Date, endDate: Date): number {
-    const yearDiff = endDate.getFullYear() - startDate.getFullYear();
-    const monthDiff = endDate.getMonth() - startDate.getMonth();
-    return yearDiff * 12 + monthDiff;
   }
 
   /**
@@ -132,8 +95,8 @@ export class DateUtils {
   }
 
   /**
-   * Converts a local Date to ISO string for API storage
-   * Maintains the local date/time values
+   * Converts a local Date to a format suitable for API storage
+   * This preserves the local date/time values without timezone conversion
    */
   static toLocalISOString(date: Date): string {
     const year = date.getFullYear();
@@ -143,17 +106,24 @@ export class DateUtils {
     const minute = String(date.getMinutes()).padStart(2, '0');
     const second = String(date.getSeconds()).padStart(2, '0');
     
-    return `${year}-${month}-${day}T${hour}:${minute}:${second}.000Z`;
+    // Return in ISO format but without timezone conversion
+    return `${year}-${month}-${day}T${hour}:${minute}:${second}`;
   }
 
   /**
-   * Parses an ISO string and returns a local Date
-   * Treats the stored time as local time
+   * Parses a date string and returns a local Date
+   * Treats the stored time as local time (no timezone conversion)
    */
   static fromLocalISOString(isoString: string): Date {
-    // Remove timezone info and treat as local
-    const localString = isoString.replace('Z', '').replace(/\+.*$/, '');
-    return new Date(localString);
+    // Parse the components manually to avoid timezone issues
+    const parts = isoString.replace('Z', '').split('T');
+    const datePart = parts[0];
+    const timePart = parts[1] || '00:00:00';
+    
+    const [year, month, day] = datePart.split('-').map(Number);
+    const [hour, minute, second] = timePart.split(':').map(Number);
+    
+    return new Date(year, month - 1, day, hour, minute, second || 0);
   }
 
   /**
@@ -167,6 +137,8 @@ export class DateUtils {
    * Gets today's date at start of day
    */
   static today(): Date {
-    return this.startOfDay(new Date());
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return today;
   }
 }

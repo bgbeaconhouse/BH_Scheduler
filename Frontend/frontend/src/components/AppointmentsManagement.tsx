@@ -137,45 +137,110 @@ const AppointmentsManagement: React.FC = () => {
       if (editingAppointment) {
         // EDITING EXISTING APPOINTMENT
         if (editingAppointment.isRecurring && editingAppointment.recurringPattern) {
-          // This is a recurring appointment - ask user what to do
-          const updateSeries = window.confirm(
-            `This is part of a recurring series.\n\nOK = Update ALL future appointments in series\nCancel = Update only this single appointment`
-          );
+          // This is a recurring appointment - check if recurring days changed
+          const selectedDays = appointmentForm.recurringDays
+            .map((selected, index) => selected ? index : -1)
+            .filter(day => day !== -1);
+
+          const hasRecurringChanges = selectedDays.length > 0 && appointmentForm.recurringEndDate;
           
-          if (updateSeries) {
-            // Update entire recurring series
-            try {
-              const response = await appointmentsApi.updateRecurringSeries({
-                recurringPattern: editingAppointment.recurringPattern,
-                residentId: editingAppointment.residentId,
-                appointmentTypeId: parseInt(appointmentForm.appointmentTypeId),
-                title: appointmentForm.title,
-                startTime: appointmentForm.startTime,
-                endTime: appointmentForm.endTime,
-                notes: appointmentForm.notes,
-                updateFutureOnly: true
-              });
-              
-              setError(`✅ Updated ${response.data.updatedCount} appointments in recurring series`);
-              setTimeout(() => setError(''), 4000);
-            } catch (error: any) {
-              throw new Error(error.message || 'Failed to update recurring series');
+          if (hasRecurringChanges) {
+            // User is changing the recurring pattern
+            const updateChoice = window.confirm(
+              `This is part of a recurring series and you've changed the recurring pattern.\n\nOK = Delete old series and create new one with new pattern\nCancel = Update only times/details (keep same days)`
+            );
+            
+            if (updateChoice) {
+              // Delete old series and create new one
+              try {
+                // First delete the old series
+                await appointmentsApi.deleteRecurringSeries(
+                  editingAppointment.recurringPattern,
+                  editingAppointment.residentId
+                );
+
+                // Then create new recurring series starting from today
+                const today = new Date();
+                const todayStr = today.toISOString().split('T')[0];
+                
+                await appointmentsApi.createRecurring({
+                  residentId: parseInt(appointmentForm.residentId),
+                  appointmentTypeId: parseInt(appointmentForm.appointmentTypeId),
+                  title: appointmentForm.title,
+                  startTime: appointmentForm.startTime,
+                  endTime: appointmentForm.endTime,
+                  daysOfWeek: selectedDays,
+                  startDate: todayStr,
+                  endDate: appointmentForm.recurringEndDate,
+                  notes: appointmentForm.notes
+                });
+
+                setError(`✅ Updated recurring series with new pattern. Old series deleted, new series created.`);
+                setTimeout(() => setError(''), 5000);
+              } catch (error: any) {
+                throw new Error(error.message || 'Failed to update recurring pattern');
+              }
+            } else {
+              // Just update times/details without changing pattern
+              try {
+                const response = await appointmentsApi.updateRecurringSeries({
+                  recurringPattern: editingAppointment.recurringPattern,
+                  residentId: editingAppointment.residentId,
+                  appointmentTypeId: parseInt(appointmentForm.appointmentTypeId),
+                  title: appointmentForm.title,
+                  startTime: appointmentForm.startTime,
+                  endTime: appointmentForm.endTime,
+                  notes: appointmentForm.notes,
+                  updateFutureOnly: true
+                });
+                
+                setError(`✅ Updated ${response.data.updatedCount} appointments in recurring series (times/details only)`);
+                setTimeout(() => setError(''), 4000);
+              } catch (error: any) {
+                throw new Error(error.message || 'Failed to update recurring series');
+              }
             }
           } else {
-            // Update just this single appointment (existing logic)
-            const startDateTime = DateUtils.createLocalDateTime(appointmentForm.startDate, appointmentForm.startTime);
-            const endDateTime = DateUtils.createLocalDateTime(appointmentForm.startDate, appointmentForm.endTime);
-            const startUTC = new Date(startDateTime.getTime() - (startDateTime.getTimezoneOffset() * 60000));
-            const endUTC = new Date(endDateTime.getTime() - (endDateTime.getTimezoneOffset() * 60000));
+            // No recurring pattern changes, just update the series normally
+            const updateSeries = window.confirm(
+              `This is part of a recurring series.\n\nOK = Update ALL future appointments in series\nCancel = Update only this single appointment`
+            );
+            
+            if (updateSeries) {
+              // Update entire recurring series
+              try {
+                const response = await appointmentsApi.updateRecurringSeries({
+                  recurringPattern: editingAppointment.recurringPattern,
+                  residentId: editingAppointment.residentId,
+                  appointmentTypeId: parseInt(appointmentForm.appointmentTypeId),
+                  title: appointmentForm.title,
+                  startTime: appointmentForm.startTime,
+                  endTime: appointmentForm.endTime,
+                  notes: appointmentForm.notes,
+                  updateFutureOnly: true
+                });
+                
+                setError(`✅ Updated ${response.data.updatedCount} appointments in recurring series`);
+                setTimeout(() => setError(''), 4000);
+              } catch (error: any) {
+                throw new Error(error.message || 'Failed to update recurring series');
+              }
+            } else {
+              // Update just this single appointment (existing logic)
+              const startDateTime = DateUtils.createLocalDateTime(appointmentForm.startDate, appointmentForm.startTime);
+              const endDateTime = DateUtils.createLocalDateTime(appointmentForm.startDate, appointmentForm.endTime);
+              const startUTC = new Date(startDateTime.getTime() - (startDateTime.getTimezoneOffset() * 60000));
+              const endUTC = new Date(endDateTime.getTime() - (endDateTime.getTimezoneOffset() * 60000));
 
-            await appointmentsApi.update(editingAppointment.id, {
-              residentId: parseInt(appointmentForm.residentId),
-              appointmentTypeId: parseInt(appointmentForm.appointmentTypeId),
-              title: appointmentForm.title,
-              startDateTime: startUTC.toISOString(),
-              endDateTime: endUTC.toISOString(),
-              notes: appointmentForm.notes
-            });
+              await appointmentsApi.update(editingAppointment.id, {
+                residentId: parseInt(appointmentForm.residentId),
+                appointmentTypeId: parseInt(appointmentForm.appointmentTypeId),
+                title: appointmentForm.title,
+                startDateTime: startUTC.toISOString(),
+                endDateTime: endUTC.toISOString(),
+                notes: appointmentForm.notes
+              });
+            }
           }
         } else {
           // Regular single appointment update (existing logic)
@@ -350,12 +415,40 @@ const AppointmentsManagement: React.FC = () => {
       const minutes = String(date.getMinutes()).padStart(2, '0');
       return `${hours}:${minutes}`;
     };
+
+    // If this is a recurring appointment, try to extract the current days from the pattern
+    let currentRecurringDays = [false, false, false, false, false, false, false];
+    if (appointment.isRecurring && appointment.recurringPattern) {
+      // Try to find all appointments in this series to determine which days are used
+      const seriesAppointments = appointments.filter(apt => 
+        apt.recurringPattern === appointment.recurringPattern && 
+        apt.residentId === appointment.residentId
+      );
+      
+      // Extract the days of week from the existing appointments
+      const usedDays = new Set<number>();
+      seriesAppointments.forEach(apt => {
+        const aptDate = new Date(apt.startDateTime);
+        usedDays.add(aptDate.getDay());
+      });
+      
+      // Set the recurring days based on what we found
+      usedDays.forEach(dayIndex => {
+        currentRecurringDays[dayIndex] = true;
+      });
+    }
+
+    // Calculate an appropriate end date for recurring series (3 months from now)
+    const futureEndDate = new Date();
+    futureEndDate.setMonth(futureEndDate.getMonth() + 3);
+    const defaultEndDate = formatDateForInput(futureEndDate);
     
     console.log('=== EDIT SUCCESS ===');
     console.log('Stored UTC time:', appointment.startDateTime);
     console.log('Converted to local:', startDate.toString());
     console.log('Form date field:', formatDateForInput(startDate));
     console.log('Form time field:', formatTimeForInput(startDate));
+    console.log('Recurring days detected:', currentRecurringDays);
     console.log('====================');
     
     setEditingAppointment(appointment);
@@ -367,8 +460,8 @@ const AppointmentsManagement: React.FC = () => {
       startTime: formatTimeForInput(startDate),
       endTime: formatTimeForInput(endDate),
       isRecurring: appointment.isRecurring,
-      recurringDays: [false, false, false, false, false, false, false],
-      recurringEndDate: '',
+      recurringDays: currentRecurringDays,
+      recurringEndDate: defaultEndDate,
       notes: appointment.notes || ''
     });
     setShowForm(true);
@@ -487,7 +580,11 @@ const AppointmentsManagement: React.FC = () => {
                   <span className="text-sm font-medium text-yellow-800">Editing Recurring Series</span>
                 </div>
                 <p className="text-sm text-yellow-700 mt-1">
-                  When you save, you'll be asked whether to update all future appointments in this recurring series or just this single appointment.
+                  You can update times, details, and even change which days this series repeats on. 
+                  When you save, you'll be asked whether to update all future appointments in this series or just this single appointment.
+                </p>
+                <p className="text-xs text-yellow-600 mt-1">
+                  💡 Tip: Changing the recurring days will delete the old series and create a new one with the new pattern.
                 </p>
               </div>
             )}
@@ -588,7 +685,7 @@ const AppointmentsManagement: React.FC = () => {
                 </div>
               </div>
 
-              {!editingAppointment && (
+              {(!editingAppointment || editingAppointment.isRecurring) && (
                 <>
                   <div className="flex items-center space-x-2">
                     <input
@@ -596,15 +693,18 @@ const AppointmentsManagement: React.FC = () => {
                       checked={appointmentForm.isRecurring}
                       onChange={(e) => setAppointmentForm({...appointmentForm, isRecurring: e.target.checked})}
                       className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                      disabled={!!editingAppointment} // Disable if editing existing appointment
                     />
-                    <span className="text-sm font-medium text-gray-700">Recurring Appointment</span>
+                    <span className="text-sm font-medium text-gray-700">
+                      {editingAppointment ? 'Recurring Appointment (edit series)' : 'Recurring Appointment'}
+                    </span>
                   </div>
 
                   {appointmentForm.isRecurring && (
                     <>
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-2">
-                          Repeat on Days
+                          {editingAppointment ? 'Change Recurring Days' : 'Repeat on Days'}
                         </label>
                         <div className="grid grid-cols-7 gap-2">
                           {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day, index) => (
@@ -623,11 +723,18 @@ const AppointmentsManagement: React.FC = () => {
                             </label>
                           ))}
                         </div>
+                        {editingAppointment && (
+                          <p className="text-xs text-gray-500 mt-1">
+                            Current pattern: {appointmentForm.recurringDays.map((checked, i) => 
+                              checked ? ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][i] : null
+                            ).filter(Boolean).join(', ') || 'None selected'}
+                          </p>
+                        )}
                       </div>
 
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">
-                          End Date for Recurring *
+                          {editingAppointment ? 'Extend Series Until *' : 'End Date for Recurring *'}
                         </label>
                         <input
                           type="date"
@@ -635,6 +742,11 @@ const AppointmentsManagement: React.FC = () => {
                           onChange={(e) => setAppointmentForm({...appointmentForm, recurringEndDate: e.target.value})}
                           className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                         />
+                        {editingAppointment && (
+                          <p className="text-xs text-gray-500 mt-1">
+                            This will create new appointments until this date with the new pattern
+                          </p>
+                        )}
                       </div>
                     </>
                   )}

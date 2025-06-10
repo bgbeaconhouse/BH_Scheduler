@@ -181,7 +181,20 @@ const AppointmentsManagement: React.FC = () => {
                   throw new Error(`Failed to delete series: ${response.status} ${errorText}`);
                 }
                 
-                const deleteResponse = await response.json();
+                // Check if response has content before parsing JSON
+                const responseText = await response.text();
+                console.log('Delete response text:', responseText);
+                
+                let deleteResponse;
+                try {
+                  deleteResponse = responseText ? JSON.parse(responseText) : {};
+                } catch (parseError) {
+                  console.error('JSON parse error:', parseError);
+                  console.log('Raw response:', responseText);
+                  // If JSON parsing fails but request was successful, continue anyway
+                  deleteResponse = { deletedCount: 'unknown' };
+                }
+                
                 console.log('Delete response:', deleteResponse);
 
                 // Then create new recurring series starting from today

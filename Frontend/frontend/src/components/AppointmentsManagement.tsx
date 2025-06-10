@@ -379,13 +379,28 @@ const AppointmentsManagement: React.FC = () => {
         // Delete entire series
         if (window.confirm(`Delete ALL future appointments in this recurring series?\n\nThis will affect: ${appointment.resident.firstName} ${appointment.resident.lastName}'s recurring ${appointment.appointmentType.name} appointments.`)) {
           try {
-            const response = await appointmentsApi.deleteRecurringSeries(
-              appointment.recurringPattern,
-              appointment.residentId
-            );
+            const response = await fetch('/api/appointments/recurring-series', {
+              method: 'DELETE',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
+              },
+              body: JSON.stringify({
+                recurringPattern: appointment.recurringPattern,
+                residentId: appointment.residentId
+              })
+            });
+            
+            if (!response.ok) {
+              const errorText = await response.text();
+              console.error('Delete response error:', errorText);
+              throw new Error(`Failed to delete series: ${response.status} ${errorText}`);
+            }
+            
+            const result = await response.json();
             
             await fetchAppointments();
-            setError(`✅ Deleted ${response.data.deletedCount} appointments from recurring series`);
+            setError(`✅ Deleted ${result.deletedCount} appointments from recurring series`);
             setTimeout(() => setError(''), 4000);
           } catch (error: any) {
             setError('❌ Failed to delete recurring series');
@@ -419,12 +434,27 @@ const AppointmentsManagement: React.FC = () => {
   const handleDeleteRecurringSeries = async (appointment: Appointment) => {
     if (window.confirm(`Delete ALL future appointments in this recurring series?\n\nThis will affect ${appointment.resident.firstName} ${appointment.resident.lastName}'s recurring ${appointment.appointmentType.name} appointments.`)) {
       try {
-        const response = await appointmentsApi.deleteRecurringSeries(
-          appointment.recurringPattern!,
-          appointment.residentId
-        );
+        const response = await fetch('/api/appointments/recurring-series', {
+          method: 'DELETE',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
+          },
+          body: JSON.stringify({
+            recurringPattern: appointment.recurringPattern!,
+            residentId: appointment.residentId
+          })
+        });
+        
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error('Delete response error:', errorText);
+          throw new Error(`Failed to delete series: ${response.status} ${errorText}`);
+        }
+        
+        const result = await response.json();
         await fetchAppointments();
-        setError(`✅ Deleted ${response.data.deletedCount} appointments from recurring series`);
+        setError(`✅ Deleted ${result.deletedCount} appointments from recurring series`);
         setTimeout(() => setError(''), 4000);
       } catch (error: any) {
         setError('❌ Failed to delete recurring series');

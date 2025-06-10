@@ -162,7 +162,7 @@ const AppointmentsManagement: React.FC = () => {
           notes: appointmentForm.notes
         });
       } else {
-        // Create single appointment
+        // Create single appointment - handle timezone properly
         const startDateTime = new Date(`${appointmentForm.startDate}T${appointmentForm.startTime}:00`);
         const endDateTime = new Date(`${appointmentForm.startDate}T${appointmentForm.endTime}:00`);
 
@@ -235,9 +235,9 @@ const AppointmentsManagement: React.FC = () => {
       residentId: appointment.residentId.toString(),
       appointmentTypeId: appointment.appointmentTypeId.toString(),
       title: appointment.title,
-      startDate: startDate.toISOString().split('T')[0],
-      startTime: startDate.toTimeString().slice(0, 5),
-      endTime: endDate.toTimeString().slice(0, 5),
+      startDate: startDate.toLocaleDateString('en-CA'), // Format: YYYY-MM-DD
+      startTime: startDate.toLocaleTimeString('en-GB', {hour12: false}).slice(0, 5), // Format: HH:MM
+      endTime: endDate.toLocaleTimeString('en-GB', {hour12: false}).slice(0, 5), // Format: HH:MM
       isRecurring: false, // Don't support editing recurring appointments
       recurringDays: [false, false, false, false, false, false, false],
       recurringEndDate: '',
@@ -262,9 +262,9 @@ const AppointmentsManagement: React.FC = () => {
   };
 
   const getAppointmentsForDate = (date: Date) => {
-    const dateStr = date.toISOString().split('T')[0];
+    const dateStr = date.toLocaleDateString('en-CA'); // YYYY-MM-DD format
     return appointments.filter(apt => {
-      const aptDate = new Date(apt.startDateTime).toISOString().split('T')[0];
+      const aptDate = new Date(apt.startDateTime).toLocaleDateString('en-CA');
       return aptDate === dateStr;
     });
   };
@@ -281,7 +281,8 @@ const AppointmentsManagement: React.FC = () => {
     return new Date(dateStr).toLocaleTimeString('en-US', { 
       hour: 'numeric', 
       minute: '2-digit',
-      hour12: true 
+      hour12: true,
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
     });
   };
 

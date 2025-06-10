@@ -162,17 +162,24 @@ const AppointmentsManagement: React.FC = () => {
           notes: appointmentForm.notes
         });
       } else {
-        // Create single appointment - use local timezone handling
+        // Create single appointment - convert local time to UTC for storage
         const startDateTime = DateUtils.createLocalDateTime(appointmentForm.startDate, appointmentForm.startTime);
         const endDateTime = DateUtils.createLocalDateTime(appointmentForm.startDate, appointmentForm.endTime);
+
+        // Convert to UTC for backend storage
+        const startUTC = new Date(startDateTime.getTime() - (startDateTime.getTimezoneOffset() * 60000));
+        const endUTC = new Date(endDateTime.getTime() - (endDateTime.getTimezoneOffset() * 60000));
+
+        console.log('Local time:', startDateTime.toString());
+        console.log('Sending to backend:', startUTC.toISOString());
 
         if (editingAppointment) {
           await appointmentsApi.update(editingAppointment.id, {
             residentId: parseInt(appointmentForm.residentId),
             appointmentTypeId: parseInt(appointmentForm.appointmentTypeId),
             title: appointmentForm.title,
-            startDateTime: DateUtils.toLocalISOString(startDateTime),
-            endDateTime: DateUtils.toLocalISOString(endDateTime),
+            startDateTime: startUTC.toISOString(),
+            endDateTime: endUTC.toISOString(),
             notes: appointmentForm.notes
           });
         } else {
@@ -180,8 +187,8 @@ const AppointmentsManagement: React.FC = () => {
             residentId: parseInt(appointmentForm.residentId),
             appointmentTypeId: parseInt(appointmentForm.appointmentTypeId),
             title: appointmentForm.title,
-            startDateTime: DateUtils.toLocalISOString(startDateTime),
-            endDateTime: DateUtils.toLocalISOString(endDateTime),
+            startDateTime: startUTC.toISOString(),
+            endDateTime: endUTC.toISOString(),
             notes: appointmentForm.notes
           });
         }

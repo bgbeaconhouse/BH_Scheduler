@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
+import * as XLSX from 'xlsx';
 import { scheduleApi, residentsApi } from '../api/client';
-import './ScheduleManagement.css'; // Import the CSS file
+import './ScheduleManagement.css';
 
 interface SchedulePeriod {
   id: number;
@@ -58,6 +59,7 @@ const ScheduleManagement: React.FC = () => {
   const [residents, setResidents] = useState<Resident[]>([]);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string>('');
   const [viewMode, setViewMode] = useState<'calendar' | 'daily' | 'edit'>('calendar');
   const [showNewPeriodForm, setShowNewPeriodForm] = useState(false);
@@ -217,8 +219,229 @@ const ScheduleManagement: React.FC = () => {
     }
   };
 
-  const handlePrint = () => {
-    window.print();
+  // Excel Export Functions
+  const handleExportToExcel = async () => {
+    if (!selectedPeriod) return;
+
+    setExporting(true);
+    try {
+      const workbook = XLSX.utils.book_new();
+      
+      // Create different worksheets
+      await createCalendarSheet(workbook);
+      await createAssignmentsSheet(workbook);
+      await createConflictsSheet(workbook);
+      await createSummarySheet(workbook);
+
+      // Generate file name
+      const fileName = `Beacon_House_Schedule_${selectedPeriod.name.replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().split('T')[0]}.xlsx`;
+      
+      // Save the file
+      XLSX.writeFile(workbook, fileName);
+      
+    } catch (error: any) {
+      setError('Failed to export to Excel: ' + error.message);
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const createCalendarSheet = async (workbook: any) => {
+    const dates = getWeekDates(selectedPeriod!.startDate, selectedPeriod!.endDate);
+    const calendarData = [];
+
+    // Header row
+    const headerRow = ['Time', ...dates.map(date => date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }))];
+    calendarData.push(headerRow);
+
+    // Get all unique time slots
+    const timeSlots = [...new Set(assignments.map(a => `${a.shift.startTime}-${a.shift.endTime}`))].sort();
+
+    // Create rows for each time slot
+    timeSlots.forEach(timeSlot => {
+      const row = [formatTimeRange(timeSlot)];
+      
+      dates.forEach(date => {
+        const dateStr = date.toISOString().split('T')[0];
+        const dayAssignments = assignments.filter(a => 
+          a.assignedDate.split('T')[0] === dateStr && 
+          `${a.shift.startTime}-${a.shift.endTime}` === timeSlot
+        );
+        
+        if (dayAssignments.length > 0) {
+          const assignmentText = dayAssignments.map(a => 
+            `${a.shift.department.name.toUpperCase()}: ${a.shift.name} - ${a.resident.firstName} ${a.resident.lastName} (${a.roleTitle})`
+          ).join('\n');
+          row.push(assignmentText);
+        } else {
+          row.push('');
+        }
+      });
+      
+      calendarData.push(row);
+    });
+
+    const calendarSheet = XLSX.utils.aoa_to_sheet(calendarData);
+    
+    // Set column widths
+    calendarSheet['!cols'] = [
+      { wch: 15 }, // Time column
+      ...dates.map(() => ({ wch: 25 })) // Date columns
+    ];
+
+    // Set row heights for multi-line content
+    calendarSheet['!rows'] = calendarData.map(() => ({ hpt: 60 }));
+
+    XLSX.utils.book_append_sheet(workbook, calendarSheet, 'Calendar View');
+  };
+
+  const createAssignmentsSheet = async (workbook: any) => {
+    const assignmentsData = [
+      ['Date', 'Day', 'Department', 'Shift Name', 'Start Time', 'End Time', 'Resident', 'Role', 'Status', 'Notes']
+    ];
+
+    assignments
+      .sort((a, b) => new Date(a.assignedDate).getTime() - new Date(b.assignedDate).getTime())
+      .forEach(assignment => {
+        const date = new Date(assignment.assignedDate);
+        assignmentsData.push([
+          date.toLocaleDateString('en-US'),
+          date.toLocaleDateString('en-US', { weekday: 'long' }),
+          assignment.shift.department.name.replace('_', ' ').toUpperCase(),
+          assignment.shift.name,
+          formatTime(assignment.shift.startTime),
+          formatTime(assignment.shift.endTime),
+          `${assignment.resident.firstName} ${assignment.resident.lastName}`,
+          assignment.roleTitle.replace('_', ' '),
+          assignment.status.replace('_', ' ').toUpperCase(),
+          assignment.notes || ''
+        ]);
+      });
+
+    const assignmentsSheet = XLSX.utils.aoa_to_sheet(assignmentsData);
+    
+    // Set column widths
+    assignmentsSheet['!cols'] = [
+      { wch: 12 }, // Date
+      { wch: 12 }, // Day
+      { wch: 15 }, // Department
+      { wch: 20 }, // Shift Name
+      { wch: 10 }, // Start Time
+      { wch: 10 }, // End Time
+      { wch: 20 }, // Resident
+      { wch: 15 }, // Role
+      { wch: 12 }, // Status
+      { wch: 30 }  // Notes
+    ];
+
+    XLSX.utils.book_append_sheet(workbook, assignmentsSheet, 'All Assignments');
+  };
+
+  const createConflictsSheet = async (workbook: any) => {
+    const conflictsData = [
+      ['Date', 'Day', 'Conflict Type', 'Severity', 'Description']
+    ];
+
+    conflicts
+      .sort((a, b) => new Date(a.conflictDate).getTime() - new Date(b.conflictDate).getTime())
+      .forEach(conflict => {
+        const date = new Date(conflict.conflictDate);
+        conflictsData.push([
+          date.toLocaleDateString('en-US'),
+          date.toLocaleDateString('en-US', { weekday: 'long' }),
+          conflict.conflictType.replace('_', ' ').toUpperCase(),
+          conflict.severity.toUpperCase(),
+          conflict.description
+        ]);
+      });
+
+    const conflictsSheet = XLSX.utils.aoa_to_sheet(conflictsData);
+    
+    // Set column widths
+    conflictsSheet['!cols'] = [
+      { wch: 12 }, // Date
+      { wch: 12 }, // Day
+      { wch: 20 }, // Type
+      { wch: 10 }, // Severity
+      { wch: 50 }  // Description
+    ];
+
+    XLSX.utils.book_append_sheet(workbook, conflictsSheet, 'Conflicts');
+  };
+
+  const createSummarySheet = async (workbook: any) => {
+    const dates = getWeekDates(selectedPeriod!.startDate, selectedPeriod!.endDate);
+    
+    const summaryData = [
+      ['BEACON HOUSE WORK SCHEDULE SUMMARY'],
+      [''],
+      ['Period:', selectedPeriod!.name],
+      ['Date Range:', `${new Date(selectedPeriod!.startDate).toLocaleDateString()} - ${new Date(selectedPeriod!.endDate).toLocaleDateString()}`],
+      ['Generated:', new Date().toLocaleDateString()],
+      [''],
+      ['STATISTICS'],
+      ['Total Assignments:', assignments.length],
+      ['Total Conflicts:', conflicts.length],
+      ['High Priority Conflicts:', conflicts.filter(c => c.severity === 'error').length],
+      [''],
+      ['DAILY BREAKDOWN'],
+      ['Date', 'Day', 'Total Assignments', 'Conflicts', 'Staff Count']
+    ];
+
+    dates.forEach(date => {
+      const dateStr = date.toISOString().split('T')[0];
+      const dayAssignments = assignments.filter(a => a.assignedDate.split('T')[0] === dateStr);
+      const dayConflicts = conflicts.filter(c => c.conflictDate.split('T')[0] === dateStr);
+      const uniqueStaff = new Set(dayAssignments.map(a => a.residentId)).size;
+
+      summaryData.push([
+        date.toLocaleDateString('en-US'),
+        date.toLocaleDateString('en-US', { weekday: 'long' }),
+        dayAssignments.length,
+        dayConflicts.length,
+        uniqueStaff
+      ]);
+    });
+
+    summaryData.push(['']);
+    summaryData.push(['DEPARTMENT BREAKDOWN']);
+    summaryData.push(['Department', 'Total Assignments', 'Unique Staff']);
+
+    const departments = [...new Set(assignments.map(a => a.shift.department.name))];
+    departments.forEach(dept => {
+      const deptAssignments = assignments.filter(a => a.shift.department.name === dept);
+      const uniqueStaff = new Set(deptAssignments.map(a => a.residentId)).size;
+      
+      summaryData.push([
+        dept.replace('_', ' ').toUpperCase(),
+        deptAssignments.length,
+        uniqueStaff
+      ]);
+    });
+
+    const summarySheet = XLSX.utils.aoa_to_sheet(summaryData);
+    
+    // Set column widths
+    summarySheet['!cols'] = [
+      { wch: 25 },
+      { wch: 15 },
+      { wch: 15 },
+      { wch: 10 },
+      { wch: 10 }
+    ];
+
+    // Style the header
+    summarySheet['A1'].s = {
+      font: { bold: true, size: 16 },
+      alignment: { horizontal: 'center' }
+    };
+
+    XLSX.utils.book_append_sheet(workbook, summarySheet, 'Summary');
+  };
+
+  const formatTimeRange = (timeSlot: string) => {
+    const [start, end] = timeSlot.split('-');
+    return `${formatTime(start)} - ${formatTime(end)}`;
   };
 
   const getWeekDates = (startDate: string, endDate: string) => {
@@ -405,7 +628,7 @@ const ScheduleManagement: React.FC = () => {
     </div>
   );
 
-  // Edit View with CSS classes
+  // Edit View (keeping the same as before for brevity)
   const EditView = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
       {assignments.map(assignment => (
@@ -455,7 +678,7 @@ const ScheduleManagement: React.FC = () => {
               display: 'flex',
               alignItems: 'center',
               gap: '8px'
-            }} className="no-print">
+            }}>
               <span style={{
                 padding: '4px 8px',
                 fontSize: '12px',
@@ -518,11 +741,16 @@ const ScheduleManagement: React.FC = () => {
 
   return (
     <div className="schedule-container">
-      <div className="schedule-header no-print">
+      <div className="schedule-header">
         <h2 className="schedule-title">Work Schedule</h2>
         <div className="header-buttons">
-          <button onClick={handlePrint} className="print-button">
-            🖨️ Print Schedule
+          <button 
+            onClick={handleExportToExcel} 
+            disabled={exporting || !selectedPeriod}
+            className="print-button"
+            style={{ backgroundColor: '#059669' }}
+          >
+            {exporting ? '📊 Exporting...' : '📊 Export to Excel'}
           </button>
           <button onClick={() => setShowNewPeriodForm(true)} className="create-period-button">
             Create New Period
@@ -531,12 +759,12 @@ const ScheduleManagement: React.FC = () => {
       </div>
 
       {error && (
-        <div className="error-message no-print">
+        <div className="error-message">
           {error}
         </div>
       )}
 
-      <div className="period-selection no-print">
+      <div className="period-selection">
         <h3>Select Schedule Period</h3>
         <div className="periods-grid">
           {periods.map(period => (
@@ -559,7 +787,7 @@ const ScheduleManagement: React.FC = () => {
       </div>
 
       {selectedPeriod && (
-        <div className="control-bar no-print">
+        <div className="control-bar">
           <div className="control-content">
             <div>
               <h3 style={{
@@ -619,7 +847,7 @@ const ScheduleManagement: React.FC = () => {
           alignItems: 'center',
           justifyContent: 'center',
           zIndex: 1000
-        }} className="no-print">
+        }}>
           <div style={{
             backgroundColor: 'white',
             borderRadius: '8px',
@@ -791,7 +1019,7 @@ const ScheduleManagement: React.FC = () => {
           alignItems: 'center',
           justifyContent: 'center',
           zIndex: 1000
-        }} className="no-print">
+        }}>
           <div style={{
             backgroundColor: 'white',
             borderRadius: '8px',
@@ -921,16 +1149,16 @@ const ScheduleManagement: React.FC = () => {
         </div>
       )}
 
-      {/* Print Instructions */}
-      {selectedPeriod && viewMode === 'calendar' && (
-        <div className="print-instructions no-print">
-          <h4>🖨️ Print Instructions</h4>
+      {/* Excel Export Instructions */}
+      {selectedPeriod && (
+        <div className="print-instructions">
+          <h4>📊 Excel Export Features</h4>
           <ul>
-            <li>Click the "🖨️ Print Schedule" button above to print this calendar</li>
-            <li>For best results, select <strong>Landscape</strong> orientation in your print settings</li>
-            <li>The calendar will automatically format for professional printing</li>
-            <li>All interactive elements and extra UI will be hidden in the printed version</li>
-            <li>Department colors and assignments will be clearly visible on paper</li>
+            <li><strong>Calendar View:</strong> Weekly calendar layout with all assignments organized by day and time</li>
+            <li><strong>All Assignments:</strong> Complete list of assignments with details like resident, role, status, and notes</li>
+            <li><strong>Conflicts:</strong> All scheduling conflicts with severity levels and descriptions</li>
+            <li><strong>Summary:</strong> Statistics, daily breakdown, and department analysis</li>
+            <li>Perfect for sharing with staff, archiving records, or further analysis in Excel</li>
           </ul>
         </div>
       )}

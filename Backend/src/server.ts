@@ -1061,8 +1061,9 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       const dayUsed = new Set<number>(); 
       const dateStr = date.toISOString().split('T')[0];
       
-      // SIMPLE FIX: Track shelter run teams for this day
+      // SIMPLE FIX: Track consistent teams for this day
       const shelterRunTeams: Record<string, number> = {}; // roleTitle -> residentId
+      const kitchenTeams: Record<string, number> = {}; // prep workers who also do janitor crew
       
       console.log(`\n📆 Processing ${dateStr} (${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][dayOfWeek]})`);
       
@@ -1086,7 +1087,7 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
             
             let selectedResident = null;
             
-            // SIMPLE FIX: For shelter runs, check if we already have someone assigned to this role today
+            // SIMPLE FIX: For shelter runs and kitchen teams, check if we already have someone assigned
             if (shift.department.name === 'shelter_runs') {
               const teamKey = `${role.roleTitle}_${i}`; // e.g., "driver_0", "driver_1", "assistant_0"
               
@@ -1097,6 +1098,22 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
                 
                 if (selectedResident) {
                   console.log(`        🔄 Reusing shelter run team member: ${selectedResident.firstName} ${selectedResident.lastName}`);
+                }
+              }
+            }
+            
+            // KITCHEN TEAM CONSISTENCY: Prep workers also work as janitors
+            else if (shift.department.name === 'kitchen') {
+              if (role.roleTitle === 'janitor') {
+                // For janitor roles, try to use prep workers first
+                const prepWorkerKey = `prep_worker_${i}`;
+                if (kitchenTeams[prepWorkerKey]) {
+                  const existingResidentId = kitchenTeams[prepWorkerKey];
+                  selectedResident = residents.find(r => r.id === existingResidentId);
+                  
+                  if (selectedResident) {
+                    console.log(`        🔄 Reusing prep worker as janitor: ${selectedResident.firstName} ${selectedResident.lastName}`);
+                  }
                 }
               }
             }
@@ -1169,11 +1186,18 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
 
                 selectedResident = sortedCandidates[0];
                 
-                // SIMPLE FIX: For shelter runs, remember this person for this role
+                // SIMPLE FIX: Remember team members for consistency
                 if (shift.department.name === 'shelter_runs') {
                   const teamKey = `${role.roleTitle}_${i}`;
                   shelterRunTeams[teamKey] = selectedResident.id;
                   console.log(`        📝 Registered shelter run team: ${teamKey} = ${selectedResident.firstName}`);
+                }
+                
+                // KITCHEN TEAM CONSISTENCY: Remember prep workers for janitor duty
+                else if (shift.department.name === 'kitchen' && role.roleTitle === 'prep_worker') {
+                  const teamKey = `prep_worker_${i}`;
+                  kitchenTeams[teamKey] = selectedResident.id;
+                  console.log(`        📝 Registered prep worker for janitor duty: ${teamKey} = ${selectedResident.firstName}`);
                 }
               }
             }
@@ -1192,8 +1216,13 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
               assignments.push(assignment);
               
               // Only mark as dayUsed if this is their first assignment of the day
-              // (shelter run people can work multiple shelter runs)
-              if (shift.department.name !== 'shelter_runs' || !Object.values(shelterRunTeams).includes(selectedResident.id)) {
+              // (shelter run people can work multiple shelter runs, prep workers can also do janitor)
+              const isReusedTeamMember = (
+                (shift.department.name === 'shelter_runs' && Object.values(shelterRunTeams).includes(selectedResident.id)) ||
+                (shift.department.name === 'kitchen' && role.roleTitle === 'janitor' && Object.values(kitchenTeams).includes(selectedResident.id))
+              );
+              
+              if (!isReusedTeamMember) {
                 dayUsed.add(selectedResident.id);
               }
               

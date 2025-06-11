@@ -1036,6 +1036,9 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
 
     const assignments: any[] = [];
     const conflicts: any[] = [];
+    
+    // Track assignments to prevent duplicates
+    const assignmentKeys = new Set<string>();
 
     // Process each date
     for (const date of dates) {
@@ -1052,6 +1055,14 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       for (const shift of dayShifts) {
         for (const role of shift.roles) {
           for (let i = 0; i < role.requiredCount; i++) {
+            // Create unique key for this assignment slot
+            const assignmentKey = `${shift.id}-${date.toISOString().split('T')[0]}-${role.roleTitle}-${i}`;
+            
+            // Skip if we already processed this slot
+            if (assignmentKeys.has(assignmentKey)) {
+              continue;
+            }
+            
             // Find eligible residents for this role
             const eligibleResidents = residents.filter(resident => {
               // Check if already assigned this day
@@ -1072,17 +1083,19 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
                 if (!hasQualification) return false;
               }
 
-          // Check availability - if no availability record exists, assume available 24/7
-const dayAvailability = resident.availability.find(a => a.dayOfWeek === dayOfWeek);
-if (dayAvailability) {
-  // Only check time restrictions if availability record exists
-  const shiftStart = new Date(`2000-01-01T${shift.startTime}:00`);
-  const shiftEnd = new Date(`2000-01-01T${shift.endTime}:00`);
-  const availStart = new Date(`2000-01-01T${dayAvailability.startTime}:00`);
-  const availEnd = new Date(`2000-01-01T${dayAvailability.endTime}:00`);
+              // Check availability - FIXED: Default to available if no availability record
+              const dayAvailability = resident.availability.find(a => a.dayOfWeek === dayOfWeek);
+              if (dayAvailability) {
+                // Only check time restrictions if availability record exists
+                const shiftStart = new Date(`2000-01-01T${shift.startTime}:00`);
+                const shiftEnd = new Date(`2000-01-01T${shift.endTime}:00`);
+                const availStart = new Date(`2000-01-01T${dayAvailability.startTime}:00`);
+                const availEnd = new Date(`2000-01-01T${dayAvailability.endTime}:00`);
 
-  if (shiftStart < availStart || shiftEnd > availEnd) return false;
-}
+                if (shiftStart < availStart || shiftEnd > availEnd) return false;
+              }
+              // If no availability record exists, assume resident is available
+
               // Check appointment conflicts
               const shiftStartTime = new Date(date);
               const shiftEndTime = new Date(date);
@@ -1119,42 +1132,78 @@ if (dayAvailability) {
 
               const selectedResident = sortedCandidates[0];
               
-              assignments.push({
+              // Create assignment
+              const assignment = {
                 schedulePeriodId: parseInt(schedulePeriodId),
                 shiftId: shift.id,
                 residentId: selectedResident.id,
                 assignedDate: date,
                 roleTitle: role.roleTitle,
                 status: 'scheduled'
-              });
-
+              };
+              
+              assignments.push(assignment);
+              assignmentKeys.add(assignmentKey);
               dayUsed.add(selectedResident.id);
+              
+              console.log(`✅ Assigned ${selectedResident.firstName} ${selectedResident.lastName} to ${shift.name} - ${role.roleTitle} on ${date.toDateString()}`);
             } else {
               // Record conflict - no eligible residents
               conflicts.push({
-                residentId: 0, // Use 0 instead of null
+                residentId: 0,
                 conflictDate: date,
                 conflictType: 'no_eligible_residents',
                 description: `No eligible residents for ${shift.name} - ${role.roleTitle}`,
                 severity: 'error'
               });
+              
+              console.log(`❌ No residents for ${shift.name} - ${role.roleTitle} on ${date.toDateString()}`);
             }
           }
         }
       }
     }
 
-    // Bulk create assignments
+    console.log(`📊 Generated ${assignments.length} assignments with ${conflicts.length} conflicts`);
+
+    // Bulk create assignments - FIXED: Handle potential duplicates gracefully
+    let createdAssignments = 0;
     if (assignments.length > 0) {
-      await prisma.shiftAssignment.createMany({
-        data: assignments
-      });
+      try {
+        await prisma.shiftAssignment.createMany({
+          data: assignments,
+          skipDuplicates: true // This will skip any duplicates instead of failing
+        });
+        createdAssignments = assignments.length;
+      } catch (error: any) {
+        // If bulk create fails, try creating one by one to identify issues
+        console.log('Bulk create failed, trying individual creates...');
+        for (const assignment of assignments) {
+          try {
+            await prisma.shiftAssignment.create({
+              data: assignment
+            });
+            createdAssignments++;
+          } catch (individualError: any) {
+            console.error('Failed to create assignment:', assignment, individualError.message);
+            // Convert failed assignment to conflict
+            conflicts.push({
+              residentId: assignment.residentId,
+              conflictDate: assignment.assignedDate,
+              conflictType: 'assignment_creation_failed',
+              description: `Failed to create assignment: ${individualError.message}`,
+              severity: 'error'
+            });
+          }
+        }
+      }
     }
 
     // Create conflict records
     if (conflicts.length > 0) {
       await prisma.scheduleConflict.createMany({
-        data: conflicts
+        data: conflicts,
+        skipDuplicates: true
       });
     }
 
@@ -1179,14 +1228,18 @@ if (dayAvailability) {
       success: true,
       period,
       stats: {
-        assignmentsCreated: assignments.length,
-        conflictsFound: conflicts.length
+        assignmentsCreated: createdAssignments,
+        conflictsFound: conflicts.length,
+        totalSlotsProcessed: assignments.length + conflicts.length
       }
     });
 
   } catch (error: any) {
     console.error('Error generating schedule:', error);
-    res.status(500).json({ error: 'Failed to generate schedule' });
+    res.status(500).json({ 
+      error: 'Failed to generate schedule',
+      details: error.message 
+    });
   }
 });
 

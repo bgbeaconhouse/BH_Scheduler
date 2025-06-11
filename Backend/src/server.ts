@@ -968,7 +968,7 @@ app.post('/api/schedule-periods', async (req: any, res: any) => {
   }
 });
 
-// SIMPLIFIED: Schedule generation without unique constraint worries
+// FIXED: Schedule generation with consistent shelter run teams
 app.post('/api/generate-schedule', async (req: any, res: any) => {
   try {
     const { schedulePeriodId, startDate, endDate } = req.body;
@@ -1055,6 +1055,32 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
 
     console.log(`📅 Processing ${dates.length} dates`);
 
+    // FIXED: Identify shelter run shifts
+    const shelterRunShifts = shifts.filter(shift => 
+      shift.department.name === 'shelter_runs'
+    );
+
+    // Group shelter run shifts by day patterns
+    const shelterRunsByDay: Record<string, any[]> = {};
+    shelterRunShifts.forEach(shift => {
+      const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+      days.forEach((day, dayIndex) => {
+        if (shift[day as keyof typeof shift] === true) {
+          if (!shelterRunsByDay[dayIndex]) shelterRunsByDay[dayIndex] = [];
+          shelterRunsByDay[dayIndex].push(shift);
+        }
+      });
+    });
+
+    // Sort shelter runs by time for each day
+    Object.keys(shelterRunsByDay).forEach(dayIndex => {
+      shelterRunsByDay[dayIndex].sort((a, b) => a.startTime.localeCompare(b.startTime));
+    });
+
+    console.log('🚐 Shelter run shifts by day:', Object.keys(shelterRunsByDay).map(d => 
+      `Day ${d}: ${shelterRunsByDay[d].length} shifts`
+    ));
+
     // Process each date
     for (const date of dates) {
       const dayOfWeek = date.getDay();
@@ -1063,39 +1089,212 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       
       console.log(`\n📆 Processing ${dateStr} (${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][dayOfWeek]})`);
       
-      // Get shifts that run on this day
-      const dayShifts = shifts.filter(shift => {
+      // STEP 1: Handle shelter runs FIRST with consistent teams
+      const dayShelterRuns = shelterRunsByDay[dayOfWeek] || [];
+      let shelterRunTeams: { drivers: number[], assistants: number[] } | null = null;
+      
+      if (dayShelterRuns.length > 0) {
+        console.log(`  🚐 Processing ${dayShelterRuns.length} shelter run shifts`);
+        
+        // Find drivers and assistants for ALL shelter runs on this day
+        const driversNeeded = dayShelterRuns.reduce((total, shift) => 
+          total + (shift.roles.find((r: any) => r.roleTitle === 'driver')?.requiredCount || 0), 0
+        );
+        const assistantsNeeded = dayShelterRuns.reduce((total, shift) => 
+          total + (shift.roles.find((r: any) => r.roleTitle === 'assistant')?.requiredCount || 0), 0
+        );
+        
+        console.log(`    Need ${driversNeeded} drivers and ${assistantsNeeded} assistants for the day`);
+        
+        // Find eligible drivers
+        const eligibleDrivers = residents.filter(resident => {
+          if (dayUsed.has(resident.id)) return false;
+          
+          // Must have driver qualification
+          const hasDriverQual = resident.qualifications.some(rq => 
+            rq.qualification.name === 'driver_shelter_run'
+          );
+          if (!hasDriverQual) return false;
+          
+          // Check availability for ALL shelter run times
+          const dayAvailability = resident.availability.find(a => a.dayOfWeek === dayOfWeek);
+          if (dayAvailability) {
+            const availStart = new Date(`2000-01-01T${dayAvailability.startTime}:00`);
+            const availEnd = new Date(`2000-01-01T${dayAvailability.endTime}:00`);
+            
+            // Must be available for all shelter run times
+            for (const shift of dayShelterRuns) {
+              const shiftStart = new Date(`2000-01-01T${shift.startTime}:00`);
+              const shiftEnd = new Date(`2000-01-01T${shift.endTime}:00`);
+              if (shiftStart < availStart || shiftEnd > availEnd) return false;
+            }
+          }
+          
+          // Check appointment conflicts for all shelter run times
+          for (const shift of dayShelterRuns) {
+            const shiftStartTime = new Date(date);
+            const shiftEndTime = new Date(date);
+            shiftStartTime.setHours(parseInt(shift.startTime.split(':')[0]), parseInt(shift.startTime.split(':')[1]));
+            shiftEndTime.setHours(parseInt(shift.endTime.split(':')[0]), parseInt(shift.endTime.split(':')[1]));
+
+            const conflictingAppointments = resident.appointments.filter(apt => {
+              const aptStart = new Date(apt.startDateTime);
+              const aptEnd = new Date(apt.endDateTime);
+              const aptDate = new Date(aptStart.getFullYear(), aptStart.getMonth(), aptStart.getDate());
+              const currentDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+              
+              if (aptDate.getTime() !== currentDate.getTime()) return false;
+              return (aptStart < shiftEndTime && aptEnd > shiftStartTime);
+            });
+            
+            if (conflictingAppointments.length > 0) return false;
+          }
+          
+          return true;
+        });
+        
+        // Find eligible assistants (same logic but no qualification requirement)
+        const eligibleAssistants = residents.filter(resident => {
+          if (dayUsed.has(resident.id)) return false;
+          
+          // Check availability for ALL shelter run times
+          const dayAvailability = resident.availability.find(a => a.dayOfWeek === dayOfWeek);
+          if (dayAvailability) {
+            const availStart = new Date(`2000-01-01T${dayAvailability.startTime}:00`);
+            const availEnd = new Date(`2000-01-01T${dayAvailability.endTime}:00`);
+            
+            for (const shift of dayShelterRuns) {
+              const shiftStart = new Date(`2000-01-01T${shift.startTime}:00`);
+              const shiftEnd = new Date(`2000-01-01T${shift.endTime}:00`);
+              if (shiftStart < availStart || shiftEnd > availEnd) return false;
+            }
+          }
+          
+          // Check appointment conflicts
+          for (const shift of dayShelterRuns) {
+            const shiftStartTime = new Date(date);
+            const shiftEndTime = new Date(date);
+            shiftStartTime.setHours(parseInt(shift.startTime.split(':')[0]), parseInt(shift.startTime.split(':')[1]));
+            shiftEndTime.setHours(parseInt(shift.endTime.split(':')[0]), parseInt(shift.endTime.split(':')[1]));
+
+            const conflictingAppointments = resident.appointments.filter(apt => {
+              const aptStart = new Date(apt.startDateTime);
+              const aptEnd = new Date(apt.endDateTime);
+              const aptDate = new Date(aptStart.getFullYear(), aptStart.getMonth(), aptStart.getDate());
+              const currentDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+              
+              if (aptDate.getTime() !== currentDate.getTime()) return false;
+              return (aptStart < shiftEndTime && aptEnd > shiftStartTime);
+            });
+            
+            if (conflictingAppointments.length > 0) return false;
+          }
+          
+          return true;
+        });
+        
+        console.log(`    Found ${eligibleDrivers.length} eligible drivers, ${eligibleAssistants.length} eligible assistants`);
+        
+        // Select drivers and assistants for the day
+        const selectedDrivers = eligibleDrivers.slice(0, driversNeeded);
+        const selectedAssistants = eligibleAssistants
+          .filter(a => !selectedDrivers.some(d => d.id === a.id)) // Don't double-assign
+          .slice(0, assistantsNeeded);
+        
+        if (selectedDrivers.length >= driversNeeded && selectedAssistants.length >= assistantsNeeded) {
+          shelterRunTeams = {
+            drivers: selectedDrivers.map(d => d.id),
+            assistants: selectedAssistants.map(a => a.id)
+          };
+          
+          // Mark these residents as used for the day
+          [...selectedDrivers, ...selectedAssistants].forEach(resident => {
+            dayUsed.add(resident.id);
+          });
+          
+          console.log(`    ✅ Selected shelter run teams:`, {
+            drivers: selectedDrivers.map(d => `${d.firstName} ${d.lastName}`),
+            assistants: selectedAssistants.map(a => `${a.firstName} ${a.lastName}`)
+          });
+          
+          // Create assignments for ALL shelter run shifts using the same teams
+          let driverIndex = 0;
+          let assistantIndex = 0;
+          
+          for (const shift of dayShelterRuns) {
+            for (const role of shift.roles) {
+              for (let i = 0; i < role.requiredCount; i++) {
+                let selectedResidentId;
+                
+                if (role.roleTitle === 'driver') {
+                  selectedResidentId = shelterRunTeams.drivers[driverIndex % shelterRunTeams.drivers.length];
+                  driverIndex++;
+                } else if (role.roleTitle === 'assistant') {
+                  selectedResidentId = shelterRunTeams.assistants[assistantIndex % shelterRunTeams.assistants.length];  
+                  assistantIndex++;
+                }
+                
+                if (selectedResidentId) {
+                  const assignment = {
+                    schedulePeriodId: parseInt(schedulePeriodId),
+                    shiftId: shift.id,
+                    residentId: selectedResidentId,
+                    assignedDate: date,
+                    roleTitle: role.roleTitle,
+                    status: 'scheduled'
+                  };
+                  
+                  assignments.push(assignment);
+                  console.log(`      ✅ Assigned ${shift.name} - ${role.roleTitle}: ${residents.find(r => r.id === selectedResidentId)?.firstName}`);
+                }
+              }
+            }
+          }
+        } else {
+          // Not enough people for shelter runs - create conflicts
+          console.log(`    ❌ Insufficient shelter run staff`);
+          
+          for (const shift of dayShelterRuns) {
+            conflicts.push({
+              residentId: 0,
+              conflictDate: date,
+              conflictType: 'insufficient_shelter_run_staff',
+              description: `Need consistent teams for all shelter runs but only found ${selectedDrivers.length}/${driversNeeded} drivers and ${selectedAssistants.length}/${assistantsNeeded} assistants`,
+              severity: 'error'
+            });
+          }
+        }
+      }
+      
+      // STEP 2: Handle all other shifts (non-shelter runs)
+      const otherShifts = shifts.filter(shift => shift.department.name !== 'shelter_runs');
+      const dayOtherShifts = otherShifts.filter(shift => {
         const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
         return shift[days[dayOfWeek] as keyof typeof shift] === true;
       });
 
-      console.log(`  🔄 Found ${dayShifts.length} shifts for this day`);
+      console.log(`  📋 Processing ${dayOtherShifts.length} other shifts`);
 
-      // Process shifts by department priority
-      for (const shift of dayShifts) {
+      // Process other shifts normally
+      for (const shift of dayOtherShifts) {
         console.log(`    🏢 Processing ${shift.department.name} - ${shift.name}`);
         
         for (const role of shift.roles) {
           console.log(`      🎯 Processing role: ${role.roleTitle} (need ${role.requiredCount})`);
           
-          // NOW WE CAN ACTUALLY FILL ALL THE REQUIRED SLOTS!
           for (let i = 0; i < role.requiredCount; i++) {
             console.log(`        👤 Looking for resident for ${role.roleTitle} (slot ${i + 1}/${role.requiredCount})`);
             
             // Find eligible residents for this role
             const eligibleResidents = residents.filter(resident => {
               // Check if already assigned this day
-              if (dayUsed.has(resident.id)) {
-                return false;
-              }
+              if (dayUsed.has(resident.id)) return false;
 
               // Check tenure requirement
               if (shift.minTenureMonths > 0) {
                 const admissionDate = new Date(resident.admissionDate);
                 const monthsDiff = (date.getTime() - admissionDate.getTime()) / (1000 * 60 * 60 * 24 * 30.44);
-                if (monthsDiff < shift.minTenureMonths) {
-                  return false;
-                }
+                if (monthsDiff < shift.minTenureMonths) return false;
               }
 
               // Check qualification requirement
@@ -1103,12 +1302,10 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
                 const hasQualification = resident.qualifications.some(
                   rq => rq.qualificationId === role.qualificationId
                 );
-                if (!hasQualification) {
-                  return false;
-                }
+                if (!hasQualification) return false;
               }
 
-              // Check availability - default to available if no availability record
+              // Check availability
               const dayAvailability = resident.availability.find(a => a.dayOfWeek === dayOfWeek);
               if (dayAvailability) {
                 const shiftStart = new Date(`2000-01-01T${shift.startTime}:00`);
@@ -1116,9 +1313,7 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
                 const availStart = new Date(`2000-01-01T${dayAvailability.startTime}:00`);
                 const availEnd = new Date(`2000-01-01T${dayAvailability.endTime}:00`);
 
-                if (shiftStart < availStart || shiftEnd > availEnd) {
-                  return false;
-                }
+                if (shiftStart < availStart || shiftEnd > availEnd) return false;
               }
 
               // Check appointment conflicts

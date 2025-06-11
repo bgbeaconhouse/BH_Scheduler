@@ -1,0 +1,720 @@
+/* ScheduleManagement.css - Print-Ready Stylesheet */
+
+/* Screen styles */
+.schedule-container {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.schedule-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.schedule-title {
+  font-size: 24px;
+  font-weight: bold;
+  color: #1f2937;
+  margin: 0;
+}
+
+.header-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.print-button {
+  background-color: #059669;
+  color: white;
+  padding: 8px 16px;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background-color 0.2s;
+}
+
+.create-period-button {
+  background-color: #16a34a;
+  color: white;
+  padding: 8px 16px;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background-color 0.2s;
+}
+
+.error-message {
+  background-color: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #dc2626;
+  padding: 12px 16px;
+  border-radius: 8px;
+}
+
+.period-selection {
+  background-color: white;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  padding: 24px;
+}
+
+.period-selection h3 {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 16px;
+  color: #1f2937;
+}
+
+.periods-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 16px;
+}
+
+.period-card {
+  padding: 16px;
+  border: 2px solid #e5e7eb;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.period-card:hover {
+  border-color: #d1d5db;
+  background-color: #f9fafb;
+}
+
+.period-card.selected {
+  border-color: #3b82f6;
+  background-color: #eff6ff;
+}
+
+.control-bar {
+  background-color: white;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  padding: 24px;
+}
+
+.control-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.control-actions {
+  display: flex;
+  gap: 16px;
+}
+
+.view-toggle {
+  display: flex;
+  background-color: #f3f4f6;
+  border-radius: 8px;
+  padding: 4px;
+}
+
+.toggle-button {
+  padding: 8px 12px;
+  font-size: 14px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  background: transparent;
+  color: #6b7280;
+  transition: all 0.2s;
+}
+
+.toggle-button.active {
+  background-color: white;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  color: #2563eb;
+}
+
+.generate-button {
+  background-color: #7c3aed;
+  color: white;
+  padding: 8px 24px;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background-color 0.2s;
+}
+
+.generate-button:disabled {
+  background-color: #9ca3af;
+  cursor: not-allowed;
+}
+
+/* Calendar Styles */
+.calendar-container {
+  background-color: white;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+}
+
+.calendar-header {
+  padding: 12px;
+  border-bottom: 1px solid #e5e7eb;
+  background: linear-gradient(to right, #eff6ff, #e0e7ff);
+  text-align: center;
+}
+
+.calendar-title {
+  font-size: 18px;
+  font-weight: bold;
+  color: #1f2937;
+  margin: 0 0 4px 0;
+}
+
+.calendar-subtitle {
+  font-size: 14px;
+  color: #6b7280;
+  margin: 0;
+}
+
+.calendar-date {
+  font-size: 12px;
+  color: #6b7280;
+  margin: 4px 0 0 0;
+}
+
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 1px;
+  background-color: #e5e7eb;
+  padding: 4px;
+}
+
+.calendar-day {
+  background-color: white;
+  min-height: 384px;
+  border-radius: 4px;
+}
+
+.day-header {
+  padding: 12px;
+  border-bottom: 1px solid #e5e7eb;
+  background: linear-gradient(to right, #eff6ff, #e0e7ff);
+}
+
+.day-name {
+  font-weight: bold;
+  color: #1f2937;
+  font-size: 18px;
+}
+
+.day-date {
+  font-size: 14px;
+  color: #6b7280;
+}
+
+.day-stats {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.staff-count {
+  font-size: 12px;
+  background-color: #dbeafe;
+  color: #1e40af;
+  padding: 2px 8px;
+  border-radius: 12px;
+}
+
+.conflicts-count {
+  font-size: 12px;
+  background-color: #fee2e2;
+  color: #dc2626;
+  padding: 2px 8px;
+  border-radius: 12px;
+}
+
+.day-content {
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.no-assignments {
+  font-size: 12px;
+  color: #9ca3af;
+  font-style: italic;
+  text-align: center;
+  padding: 32px 8px;
+}
+
+.department-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.department-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.department-icon {
+  font-size: 14px;
+}
+
+.department-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.assignment-card {
+  font-size: 12px;
+  padding: 8px;
+  border-radius: 6px;
+  border-left: 4px solid;
+  cursor: pointer;
+  transition: box-shadow 0.2s;
+}
+
+.assignment-card:hover {
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.assignment-card.kitchen {
+  background-color: #fff7ed;
+  border-left-color: #fb923c;
+  color: #7c2d12;
+}
+
+.assignment-card.shelter_runs {
+  background-color: #eff6ff;
+  border-left-color: #60a5fa;
+  color: #1e3a8a;
+}
+
+.assignment-card.thrift_stores {
+  background-color: #f0fdf4;
+  border-left-color: #4ade80;
+  color: #14532d;
+}
+
+.assignment-card.maintenance {
+  background-color: #faf5ff;
+  border-left-color: #a78bfa;
+  color: #581c87;
+}
+
+.assignment-title {
+  font-weight: 500;
+  margin-bottom: 2px;
+}
+
+.assignment-time {
+  opacity: 0.8;
+  margin-bottom: 4px;
+}
+
+.assignment-resident {
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.assignment-role {
+  opacity: 0.7;
+  text-transform: capitalize;
+}
+
+.assignment-status {
+  font-size: 11px;
+  margin-top: 4px;
+  font-weight: 500;
+}
+
+.assignment-status.completed {
+  color: #16a34a;
+}
+
+.assignment-status.no_show {
+  color: #dc2626;
+}
+
+.assignment-status.covered {
+  color: #d97706;
+}
+
+.legend {
+  background-color: #f9fafb;
+  padding: 16px 24px;
+  border-top: 1px solid #e5e7eb;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.legend-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: #374151;
+}
+
+.legend-items {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.legend-color {
+  width: 16px;
+  height: 16px;
+  border-radius: 2px;
+  border-left: 4px solid;
+}
+
+.legend-color.kitchen {
+  background-color: #fff7ed;
+  border-left-color: #fb923c;
+}
+
+.legend-color.shelter {
+  background-color: #eff6ff;
+  border-left-color: #60a5fa;
+}
+
+.legend-color.thrift {
+  background-color: #f0fdf4;
+  border-left-color: #4ade80;
+}
+
+.legend-color.maintenance {
+  background-color: #faf5ff;
+  border-left-color: #a78bfa;
+}
+
+.legend-label {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.print-instructions {
+  background-color: #f0f9ff;
+  border: 1px solid #bae6fd;
+  border-radius: 8px;
+  padding: 16px;
+  margin-top: 16px;
+}
+
+.print-instructions h4 {
+  font-size: 16px;
+  font-weight: 600;
+  color: #0c4a6e;
+  margin: 0 0 8px 0;
+}
+
+.print-instructions ul {
+  font-size: 14px;
+  color: #0369a1;
+  margin: 0;
+  padding-left: 20px;
+}
+
+/* PRINT STYLES */
+@media print {
+  /* Hide non-essential elements */
+  .schedule-header,
+  .period-selection,
+  .control-bar,
+  .print-instructions,
+  .error-message {
+    display: none !important;
+  }
+
+  /* Page setup */
+  @page {
+    size: landscape;
+    margin: 0.5in;
+  }
+
+  /* Reset everything for print */
+  * {
+    print-color-adjust: exact !important;
+    -webkit-print-color-adjust: exact !important;
+  }
+
+  body {
+    font-family: Arial, sans-serif;
+    font-size: 12px;
+    line-height: 1.3;
+    color: black;
+    background: white;
+  }
+
+  /* Print header */
+  .calendar-container::before {
+    content: "Beacon House Work Schedule";
+    display: block;
+    text-align: center;
+    font-size: 20px;
+    font-weight: bold;
+    color: black;
+    margin-bottom: 10px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid black;
+  }
+
+  /* Calendar container for print */
+  .calendar-container {
+    width: 100% !important;
+    height: auto !important;
+    box-shadow: none !important;
+    border: 2px solid black !important;
+    border-radius: 0 !important;
+    background: white !important;
+    page-break-inside: avoid;
+  }
+
+  /* Calendar header for print */
+  .calendar-header {
+    background: #f0f0f0 !important;
+    color: black !important;
+    padding: 10px !important;
+    border-bottom: 2px solid black !important;
+    text-align: center !important;
+    page-break-after: avoid;
+  }
+
+  .calendar-title,
+  .calendar-subtitle,
+  .calendar-date {
+    color: black !important;
+    background: none !important;
+  }
+
+  .calendar-title {
+    font-size: 16px !important;
+    margin-bottom: 5px !important;
+  }
+
+  .calendar-subtitle {
+    font-size: 14px !important;
+  }
+
+  .calendar-date {
+    font-size: 12px !important;
+  }
+
+  /* Calendar grid for print */
+  .calendar-grid {
+    display: grid !important;
+    grid-template-columns: repeat(7, 1fr) !important;
+    gap: 2px !important;
+    background-color: black !important;
+    padding: 2px !important;
+    width: 100% !important;
+  }
+
+  /* Calendar days for print */
+  .calendar-day {
+    background: white !important;
+    min-height: 3.5in !important;
+    border-radius: 0 !important;
+    page-break-inside: avoid;
+  }
+
+  /* Day headers for print */
+  .day-header {
+    background: #f5f5f5 !important;
+    border-bottom: 1px solid black !important;
+    padding: 5px !important;
+    page-break-after: avoid;
+  }
+
+  .day-name {
+    font-size: 14px !important;
+    font-weight: bold !important;
+    color: black !important;
+    margin-bottom: 2px !important;
+  }
+
+  .day-date {
+    font-size: 12px !important;
+    color: #333 !important;
+    margin-bottom: 5px !important;
+  }
+
+  .day-stats {
+    margin-top: 5px !important;
+  }
+
+  .staff-count,
+  .conflicts-count {
+    font-size: 10px !important;
+    padding: 2px 6px !important;
+    border-radius: 8px !important;
+    border: 1px solid #ccc !important;
+    background: white !important;
+    color: black !important;
+  }
+
+  /* Day content for print */
+  .day-content {
+    padding: 5px !important;
+    gap: 5px !important;
+  }
+
+  .no-assignments {
+    font-size: 11px !important;
+    color: #666 !important;
+    padding: 20px 5px !important;
+  }
+
+  /* Department sections for print */
+  .department-section {
+    margin-bottom: 8px !important;
+    page-break-inside: avoid;
+  }
+
+  .department-header {
+    margin-bottom: 4px !important;
+    border-bottom: 1px solid #ddd !important;
+    padding-bottom: 2px !important;
+  }
+
+  .department-icon {
+    font-size: 12px !important;
+  }
+
+  .department-name {
+    font-size: 10px !important;
+    font-weight: bold !important;
+    color: black !important;
+  }
+
+  /* Assignment cards for print */
+  .assignment-card {
+    border: 1px solid #ccc !important;
+    background: white !important;
+    color: black !important;
+    padding: 4px !important;
+    margin-bottom: 3px !important;
+    font-size: 9px !important;
+    border-radius: 2px !important;
+    page-break-inside: avoid;
+  }
+
+  .assignment-card.kitchen {
+    border-left: 3px solid #f97316 !important;
+  }
+
+  .assignment-card.shelter_runs {
+    border-left: 3px solid #3b82f6 !important;
+  }
+
+  .assignment-card.thrift_stores {
+    border-left: 3px solid #10b981 !important;
+  }
+
+  .assignment-card.maintenance {
+    border-left: 3px solid #8b5cf6 !important;
+  }
+
+  .assignment-title {
+    font-size: 10px !important;
+    font-weight: bold !important;
+    color: black !important;
+    margin-bottom: 2px !important;
+  }
+
+  .assignment-time {
+    font-size: 8px !important;
+    color: #555 !important;
+    margin-bottom: 2px !important;
+  }
+
+  .assignment-resident {
+    font-size: 9px !important;
+    font-weight: 600 !important;
+    color: black !important;
+    margin-bottom: 2px !important;
+  }
+
+  .assignment-role {
+    font-size: 8px !important;
+    color: #666 !important;
+  }
+
+  .assignment-status {
+    font-size: 8px !important;
+    font-weight: bold !important;
+    color: #333 !important;
+    margin-top: 2px !important;
+  }
+
+  /* Legend for print */
+  .legend {
+    background: #f9f9f9 !important;
+    border-top: 2px solid black !important;
+    padding: 8px !important;
+    page-break-inside: avoid;
+  }
+
+  .legend-title {
+    font-size: 12px !important;
+    font-weight: bold !important;
+    color: black !important;
+    margin-bottom: 5px !important;
+  }
+
+  .legend-items {
+    gap: 15px !important;
+  }
+
+  .legend-item {
+    gap: 5px !important;
+  }
+
+  .legend-color {
+    width: 12px !important;
+    height: 8px !important;
+    border: 1px solid #333 !important;
+  }
+
+  .legend-color.kitchen {
+    background: #f97316 !important;
+  }
+
+  .legend-color.shelter {
+    background: #3b82f6 !important;
+  }
+
+  .legend-color.thrift {
+    background: #10b981 !important;
+  }
+
+  .legend-color.maintenance {
+    background: #8b5cf6 !important;
+  }
+
+  .legend-label {
+    font-size: 10px !important;
+    color: black !important;
+  }
+}

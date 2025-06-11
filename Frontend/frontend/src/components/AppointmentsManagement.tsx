@@ -429,7 +429,9 @@ const AppointmentsManagement: React.FC = () => {
     }
   };
 
- const handleDelete = async (appointment: Appointment) => {
+ 
+// Replace your handleDelete function with this:
+const handleDelete = async (appointment: Appointment) => {
   console.log('=== HANDLE DELETE ===');
   console.log('Appointment:', {
     id: appointment.id,
@@ -447,8 +449,8 @@ const AppointmentsManagement: React.FC = () => {
     console.log('Delete type choice:', deleteType ? 'Series' : 'Single');
     
     if (deleteType) {
-      // Delete entire series using the dedicated function
-      await handleDeleteRecurringSeries(appointment);
+      // Delete entire series using the API client
+      await handleDeleteRecurringSeriesNew(appointment);
     } else {
       // Delete just this one appointment
       if (window.confirm('Delete only this single appointment?')) {
@@ -480,13 +482,11 @@ const AppointmentsManagement: React.FC = () => {
     }
   }
 };
-  // Helper function for quick series operations
- const handleDeleteRecurringSeries = async (appointment: Appointment) => {
-  console.log('=== CLIENT DELETE SERIES ===');
-  console.log('Appointment object:', appointment);
-  console.log('Recurring pattern:', appointment.recurringPattern);
-  console.log('Resident ID:', appointment.residentId);
-  console.log('Is recurring:', appointment.isRecurring);
+
+// Replace your handleDeleteRecurringSeries function with this NEW one:
+const handleDeleteRecurringSeriesNew = async (appointment: Appointment) => {
+  console.log('=== API CLIENT DELETE SERIES ===');
+  console.log('Appointment:', appointment);
   
   if (!appointment.recurringPattern) {
     setError('❌ No recurring pattern found for this appointment');
@@ -495,62 +495,31 @@ const AppointmentsManagement: React.FC = () => {
   
   if (window.confirm(`Delete ALL future appointments in this recurring series?\n\nThis will affect ${appointment.resident.firstName} ${appointment.resident.lastName}'s recurring ${appointment.appointmentType.name} appointments.\n\nPattern: ${appointment.recurringPattern}`)) {
     try {
-      const requestData = {
-        recurringPattern: appointment.recurringPattern,
-        residentId: appointment.residentId
-      };
+      console.log('Calling API client deleteRecurringSeries...');
+      console.log('Pattern:', appointment.recurringPattern);
+      console.log('Resident ID:', appointment.residentId);
       
-      console.log('Sending delete request with data:', requestData);
+      // Use the API client which has all the debug logging
+      const response = await appointmentsApi.deleteRecurringSeries(
+        appointment.recurringPattern,
+        appointment.residentId
+      );
       
-      const authToken = localStorage.getItem('auth_token');
-      if (!authToken) {
-        throw new Error('No authentication token found');
-      }
+      console.log('API client response received:', response);
+      console.log('Response data:', response.data);
       
-      const response = await fetch('/api/appointments/recurring-series', {
-        method: 'DELETE',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${authToken}`
-        },
-        body: JSON.stringify(requestData)
-      });
-      
-      console.log('Response status:', response.status);
-      console.log('Response headers:', Object.fromEntries(response.headers.entries()));
-      
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Delete response error:', errorText);
-        throw new Error(`Failed to delete series: ${response.status} - ${errorText}`);
-      }
-      
-      // Check if response has content
-      const responseText = await response.text();
-      console.log('Raw response text:', responseText);
-      
-      let result;
-      try {
-        result = responseText ? JSON.parse(responseText) : { deletedCount: 0 };
-      } catch (parseError) {
-        console.error('JSON parse error:', parseError);
-        console.log('Treating as successful deletion with unknown count');
-        result = { deletedCount: 'unknown', message: 'Delete operation completed' };
-      }
-      
-      console.log('Parsed result:', result);
-      
-      // Refresh appointments regardless of parse success
+      // Refresh appointments
       await fetchAppointments();
       
       // Show success message
-      const deletedCount = result.deletedCount || 'unknown number of';
+      const deletedCount = response.data?.deletedCount || 'unknown number of';
       setError(`✅ Deleted ${deletedCount} appointments from recurring series`);
       setTimeout(() => setError(''), 4000);
       
     } catch (error: any) {
-      console.error('Error in handleDeleteRecurringSeries:', error);
-      console.error('Error stack:', error.stack);
+      console.error('=== DELETE SERIES ERROR ===');
+      console.error('Error:', error);
+      
       setError(`❌ Failed to delete recurring series: ${error.message}`);
       setTimeout(() => setError(''), 6000);
     }
@@ -1038,7 +1007,7 @@ const AppointmentsManagement: React.FC = () => {
                             </button>
                             {appointment.isRecurring && appointment.recurringPattern && (
                               <button
-                                onClick={() => handleDeleteRecurringSeries(appointment)}
+                                onClick={() => handleDeleteRecurringSeriesNew(appointment)}
                                 className="text-red-500 hover:text-red-700 text-xs underline"
                                 title="Delete entire recurring series"
                               >

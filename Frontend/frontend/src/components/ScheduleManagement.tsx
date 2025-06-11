@@ -130,34 +130,60 @@ const ScheduleManagement: React.FC = () => {
     }
   };
 
-  const handleGenerateSchedule = async () => {
-    if (!selectedPeriod) return;
-    
-    const confirmed = confirm(
-      'This will clear any existing assignments and generate a new schedule. Continue?'
-    );
-    
-    if (!confirmed) return;
+ // FIXED: Frontend schedule generation handler with accurate reporting
+const handleGenerateSchedule = async () => {
+  if (!selectedPeriod) return;
+  
+  const confirmed = confirm(
+    'This will clear any existing assignments and generate a new schedule. Continue?'
+  );
+  
+  if (!confirmed) return;
 
-    setGenerating(true);
-    try {
-      const response = await scheduleApi.generateSchedule({
-        schedulePeriodId: selectedPeriod.id,
-        startDate: selectedPeriod.startDate,
-        endDate: selectedPeriod.endDate
-      });
-      
-      await fetchAssignments();
-      await fetchConflicts();
-      
-      alert(`Schedule generated! ${response.data.stats.assignmentsCreated} assignments created, ${response.data.stats.conflictsFound} conflicts found.`);
-    } catch (error: any) {
-      setError(error.message || 'Failed to generate schedule');
-    } finally {
-      setGenerating(false);
+  setGenerating(true);
+  try {
+    console.log('🚀 Starting schedule generation...');
+    
+    const response = await scheduleApi.generateSchedule({
+      schedulePeriodId: selectedPeriod.id,
+      startDate: selectedPeriod.startDate,
+      endDate: selectedPeriod.endDate
+    });
+    
+    console.log('📊 Generation response:', response.data);
+    
+    // Refresh the data to get accurate counts
+    await fetchAssignments();
+    await fetchConflicts();
+    
+    // Show ACCURATE stats from the response
+    const stats = response.data.stats;
+    
+    let message = `Schedule Generation Complete!\n\n`;
+    message += `📊 Generated: ${stats.assignmentsGenerated} assignments\n`;
+    message += `✅ Successfully Created: ${stats.assignmentsCreated} assignments\n`;
+    
+    if (stats.creationErrors > 0) {
+      message += `❌ Creation Errors: ${stats.creationErrors}\n`;
     }
-  };
-
+    
+    message += `⚠️ Conflicts Found: ${stats.conflictsFound}\n`;
+    message += `📝 Conflict Records: ${stats.conflictsCreated}`;
+    
+    // Show breakdown if there are discrepancies
+    if (stats.assignmentsGenerated !== stats.assignmentsCreated) {
+      message += `\n\n🔍 Note: ${stats.assignmentsGenerated - stats.assignmentsCreated} assignments were duplicates or failed validation.`;
+    }
+    
+    alert(message);
+    
+  } catch (error: any) {
+    console.error('💥 Schedule generation failed:', error);
+    setError(error.message || 'Failed to generate schedule');
+  } finally {
+    setGenerating(false);
+  }
+};
   const getWeekDates = (startDate: string, endDate: string) => {
     const start = new Date(startDate);
     const end = new Date(endDate);

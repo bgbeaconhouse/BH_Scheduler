@@ -968,6 +968,7 @@ app.post('/api/schedule-periods', async (req: any, res: any) => {
   }
 });
 
+// FIXED: Schedule generation route with proper conflict tracking
 app.post('/api/generate-schedule', async (req: any, res: any) => {
   try {
     const { schedulePeriodId, startDate, endDate } = req.body;
@@ -976,9 +977,22 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       return res.status(400).json({ error: 'Schedule period ID, start date, and end date are required' });
     }
 
+    console.log('🔥 SCHEDULE GENERATION STARTED');
+    console.log('Period:', schedulePeriodId, 'Dates:', startDate, 'to', endDate);
+
     // Clear existing assignments for this period
     await prisma.shiftAssignment.deleteMany({
       where: { schedulePeriodId: parseInt(schedulePeriodId) }
+    });
+
+    // Clear existing conflicts for this date range
+    await prisma.scheduleConflict.deleteMany({
+      where: {
+        conflictDate: {
+          gte: new Date(startDate),
+          lte: new Date(endDate)
+        }
+      }
     });
 
     // Get all active shifts with their requirements
@@ -993,7 +1007,7 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
         }
       },
       orderBy: [
-        { department: { priority: 'desc' } }, // Kitchen first (highest priority)
+        { department: { priority: 'desc' } },
         { startTime: 'asc' }
       ]
     });
@@ -1026,6 +1040,8 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       }
     });
 
+    console.log(`📊 Found ${shifts.length} shifts and ${residents.length} residents`);
+
     // Generate date range
     const start = new Date(startDate);
     const end = new Date(endDate);
@@ -1037,13 +1053,18 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
     const assignments: any[] = [];
     const conflicts: any[] = [];
     
-    // Track assignments to prevent duplicates
+    // FIXED: Use a more specific key that includes date
     const assignmentKeys = new Set<string>();
+
+    console.log(`📅 Processing ${dates.length} dates`);
 
     // Process each date
     for (const date of dates) {
-      const dayOfWeek = date.getDay(); // 0 = Sunday, 1 = Monday, etc.
-      const dayUsed = new Set(); // Track residents used on this specific day
+      const dayOfWeek = date.getDay();
+      const dayUsed = new Set<number>(); 
+      const dateStr = date.toISOString().split('T')[0];
+      
+      console.log(`\n📆 Processing ${dateStr} (${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][dayOfWeek]})`);
       
       // Get shifts that run on this day
       const dayShifts = shifts.filter(shift => {
@@ -1051,28 +1072,39 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
         return shift[days[dayOfWeek] as keyof typeof shift] === true;
       });
 
+      console.log(`  🔄 Found ${dayShifts.length} shifts for this day`);
+
       // Process shifts by department priority
       for (const shift of dayShifts) {
+        console.log(`    🏢 Processing ${shift.department.name} - ${shift.name}`);
+        
         for (const role of shift.roles) {
           for (let i = 0; i < role.requiredCount; i++) {
-            // Create unique key for this assignment slot
-            const assignmentKey = `${shift.id}-${date.toISOString().split('T')[0]}-${role.roleTitle}-${i}`;
+            // FIXED: Create more specific unique key
+            const assignmentKey = `${dateStr}-${shift.id}-${role.id}-${i}`;
             
-            // Skip if we already processed this slot
+            // Skip if we already processed this exact slot
             if (assignmentKeys.has(assignmentKey)) {
+              console.log(`      ⏭️  Skipping duplicate key: ${assignmentKey}`);
               continue;
             }
+            
+            console.log(`      🎯 Filling role: ${role.roleTitle} (${i + 1}/${role.requiredCount})`);
             
             // Find eligible residents for this role
             const eligibleResidents = residents.filter(resident => {
               // Check if already assigned this day
-              if (dayUsed.has(resident.id)) return false;
+              if (dayUsed.has(resident.id)) {
+                return false;
+              }
 
               // Check tenure requirement
               if (shift.minTenureMonths > 0) {
                 const admissionDate = new Date(resident.admissionDate);
                 const monthsDiff = (date.getTime() - admissionDate.getTime()) / (1000 * 60 * 60 * 24 * 30.44);
-                if (monthsDiff < shift.minTenureMonths) return false;
+                if (monthsDiff < shift.minTenureMonths) {
+                  return false;
+                }
               }
 
               // Check qualification requirement
@@ -1080,21 +1112,23 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
                 const hasQualification = resident.qualifications.some(
                   rq => rq.qualificationId === role.qualificationId
                 );
-                if (!hasQualification) return false;
+                if (!hasQualification) {
+                  return false;
+                }
               }
 
-              // Check availability - FIXED: Default to available if no availability record
+              // Check availability
               const dayAvailability = resident.availability.find(a => a.dayOfWeek === dayOfWeek);
               if (dayAvailability) {
-                // Only check time restrictions if availability record exists
                 const shiftStart = new Date(`2000-01-01T${shift.startTime}:00`);
                 const shiftEnd = new Date(`2000-01-01T${shift.endTime}:00`);
                 const availStart = new Date(`2000-01-01T${dayAvailability.startTime}:00`);
                 const availEnd = new Date(`2000-01-01T${dayAvailability.endTime}:00`);
 
-                if (shiftStart < availStart || shiftEnd > availEnd) return false;
+                if (shiftStart < availStart || shiftEnd > availEnd) {
+                  return false;
+                }
               }
-              // If no availability record exists, assume resident is available
 
               // Check appointment conflicts
               const shiftStartTime = new Date(date);
@@ -1110,20 +1144,20 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
                 
                 if (aptDate.getTime() !== currentDate.getTime()) return false;
 
-                // Check different types of conflicts
                 if (shift.blocksCounselingOnly && apt.appointmentType.name === 'counseling') return true;
                 if (shift.blocksAllAppointments) return true;
                 
-                // Time overlap check for other appointments
                 return (aptStart < shiftEndTime && aptEnd > shiftStartTime);
               });
 
               return conflictingAppointments.length === 0;
             });
 
+            console.log(`        👥 Found ${eligibleResidents.length} eligible residents`);
+
             // Assign best candidate
             if (eligibleResidents.length > 0) {
-              // Prefer residents with fewer existing assignments (load balancing)
+              // Load balancing - prefer residents with fewer assignments
               const sortedCandidates = eligibleResidents.sort((a, b) => {
                 const aAssignments = assignments.filter(assign => assign.residentId === a.id).length;
                 const bAssignments = assignments.filter(assign => assign.residentId === b.id).length;
@@ -1146,68 +1180,76 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
               assignmentKeys.add(assignmentKey);
               dayUsed.add(selectedResident.id);
               
-              console.log(`✅ Assigned ${selectedResident.firstName} ${selectedResident.lastName} to ${shift.name} - ${role.roleTitle} on ${date.toDateString()}`);
+              console.log(`        ✅ Assigned ${selectedResident.firstName} ${selectedResident.lastName}`);
             } else {
               // Record conflict - no eligible residents
-              conflicts.push({
+              const conflict = {
                 residentId: 0,
                 conflictDate: date,
                 conflictType: 'no_eligible_residents',
-                description: `No eligible residents for ${shift.name} - ${role.roleTitle}`,
+                description: `No eligible residents for ${shift.department.name} - ${shift.name} - ${role.roleTitle}`,
                 severity: 'error'
-              });
+              };
               
-              console.log(`❌ No residents for ${shift.name} - ${role.roleTitle} on ${date.toDateString()}`);
+              conflicts.push(conflict);
+              console.log(`        ❌ No eligible residents - conflict recorded`);
             }
           }
         }
       }
     }
 
-    console.log(`📊 Generated ${assignments.length} assignments with ${conflicts.length} conflicts`);
+    console.log(`\n📊 GENERATION COMPLETE:`);
+    console.log(`📊 - Generated ${assignments.length} assignments`);
+    console.log(`📊 - Found ${conflicts.length} conflicts`);
 
-    // Bulk create assignments - FIXED: Handle potential duplicates gracefully
-    let createdAssignments = 0;
-    if (assignments.length > 0) {
+    // FIXED: Create assignments one by one to get accurate count
+    let actuallyCreated = 0;
+    const creationErrors = [];
+
+    for (const assignment of assignments) {
       try {
-        await prisma.shiftAssignment.createMany({
-          data: assignments,
-          skipDuplicates: true // This will skip any duplicates instead of failing
+        await prisma.shiftAssignment.create({
+          data: assignment
         });
-        createdAssignments = assignments.length;
+        actuallyCreated++;
       } catch (error: any) {
-        // If bulk create fails, try creating one by one to identify issues
-        console.log('Bulk create failed, trying individual creates...');
-        for (const assignment of assignments) {
-          try {
-            await prisma.shiftAssignment.create({
-              data: assignment
-            });
-            createdAssignments++;
-          } catch (individualError: any) {
-            console.error('Failed to create assignment:', assignment, individualError.message);
-            // Convert failed assignment to conflict
-            conflicts.push({
-              residentId: assignment.residentId,
-              conflictDate: assignment.assignedDate,
-              conflictType: 'assignment_creation_failed',
-              description: `Failed to create assignment: ${individualError.message}`,
-              severity: 'error'
-            });
-          }
-        }
+        creationErrors.push({
+          assignment,
+          error: error.message
+        });
+        
+        // Convert failed assignment to conflict
+        conflicts.push({
+          residentId: assignment.residentId,
+          conflictDate: assignment.assignedDate,
+          conflictType: 'assignment_creation_failed',
+          description: `Failed to create assignment: ${error.message}`,
+          severity: 'error'
+        });
       }
     }
 
+    console.log(`📊 - Actually created ${actuallyCreated} assignments`);
+    console.log(`📊 - Creation errors: ${creationErrors.length}`);
+
     // Create conflict records
+    let conflictsCreated = 0;
     if (conflicts.length > 0) {
-      await prisma.scheduleConflict.createMany({
-        data: conflicts,
-        skipDuplicates: true
-      });
+      try {
+        await prisma.scheduleConflict.createMany({
+          data: conflicts,
+          skipDuplicates: true
+        });
+        conflictsCreated = conflicts.length;
+      } catch (error: any) {
+        console.error('Error creating conflicts:', error);
+      }
     }
 
-    // Return results
+    console.log(`📊 - Created ${conflictsCreated} conflict records`);
+
+    // Return ACCURATE results
     const period = await prisma.schedulePeriod.findUnique({
       where: { id: parseInt(schedulePeriodId) },
       include: {
@@ -1224,18 +1266,25 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       }
     });
 
+    const finalStats = {
+      assignmentsGenerated: assignments.length,
+      assignmentsCreated: actuallyCreated,
+      creationErrors: creationErrors.length,
+      conflictsFound: conflicts.length,
+      conflictsCreated: conflictsCreated,
+      totalSlotsProcessed: assignments.length + conflicts.length
+    };
+
+    console.log('📊 FINAL STATS:', finalStats);
+
     res.json({
       success: true,
       period,
-      stats: {
-        assignmentsCreated: createdAssignments,
-        conflictsFound: conflicts.length,
-        totalSlotsProcessed: assignments.length + conflicts.length
-      }
+      stats: finalStats
     });
 
   } catch (error: any) {
-    console.error('Error generating schedule:', error);
+    console.error('💥 Error generating schedule:', error);
     res.status(500).json({ 
       error: 'Failed to generate schedule',
       details: error.message 

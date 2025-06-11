@@ -1072,17 +1072,17 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
                 if (!hasQualification) return false;
               }
 
-              // Check availability
-              const dayAvailability = resident.availability.find(a => a.dayOfWeek === dayOfWeek);
-              if (!dayAvailability) return false;
+          // Check availability - if no availability record exists, assume available 24/7
+const dayAvailability = resident.availability.find(a => a.dayOfWeek === dayOfWeek);
+if (dayAvailability) {
+  // Only check time restrictions if availability record exists
+  const shiftStart = new Date(`2000-01-01T${shift.startTime}:00`);
+  const shiftEnd = new Date(`2000-01-01T${shift.endTime}:00`);
+  const availStart = new Date(`2000-01-01T${dayAvailability.startTime}:00`);
+  const availEnd = new Date(`2000-01-01T${dayAvailability.endTime}:00`);
 
-              const shiftStart = new Date(`2000-01-01T${shift.startTime}:00`);
-              const shiftEnd = new Date(`2000-01-01T${shift.endTime}:00`);
-              const availStart = new Date(`2000-01-01T${dayAvailability.startTime}:00`);
-              const availEnd = new Date(`2000-01-01T${dayAvailability.endTime}:00`);
-
-              if (shiftStart < availStart || shiftEnd > availEnd) return false;
-
+  if (shiftStart < availStart || shiftEnd > availEnd) return false;
+}
               // Check appointment conflicts
               const shiftStartTime = new Date(date);
               const shiftEndTime = new Date(date);

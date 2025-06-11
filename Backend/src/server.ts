@@ -23,8 +23,6 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
-
-// Replace your existing loginLimiter with this corrected version:
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 5, // Limit each IP to 5 requests per windowMs
@@ -32,7 +30,6 @@ const loginLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skipSuccessfulRequests: true, // Don't count successful requests
-  // The trust proxy setting is handled by Express, not the rate limiter
 });
 
 // JWT verification middleware
@@ -53,13 +50,8 @@ const authenticateToken = (req: any, res: any, next: any) => {
   });
 };
 
-// Add these routes to your server.ts (before other routes):
-
 function parseAsLocalDate(dateString: string): Date {
-  // Remove any timezone indicators
   const cleanDateString = dateString.replace('Z', '').replace(/\+.*$/, '');
-  
-  // Parse as local time by treating it as if it's in the local timezone
   return new Date(cleanDateString);
 }
 
@@ -72,7 +64,6 @@ app.post('/api/auth/login', loginLimiter, async (req: any, res: any) => {
       return res.status(400).json({ error: 'Username and password are required' });
     }
 
-    // Check if this is the initial setup (no admin user exists)
     const adminExists = await prisma.systemSetting.findUnique({
       where: { key: 'admin_setup_complete' }
     });
@@ -84,7 +75,6 @@ app.post('/api/auth/login', loginLimiter, async (req: any, res: any) => {
       });
     }
 
-    // Get admin credentials from system settings
     const [adminUsername, adminPasswordHash] = await Promise.all([
       prisma.systemSetting.findUnique({ where: { key: 'admin_username' } }),
       prisma.systemSetting.findUnique({ where: { key: 'admin_password_hash' } })
@@ -94,18 +84,15 @@ app.post('/api/auth/login', loginLimiter, async (req: any, res: any) => {
       return res.status(500).json({ error: 'Admin credentials not found' });
     }
 
-    // Check username
     if (username !== adminUsername.value) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // Check password
     const passwordValid = await bcrypt.compare(password, adminPasswordHash.value);
     if (!passwordValid) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // Generate JWT token
     const token = jwt.sign(
       { username: adminUsername.value, role: 'admin' },
       process.env.JWT_SECRET || 'fallback_secret',
@@ -126,7 +113,6 @@ app.post('/api/auth/login', loginLimiter, async (req: any, res: any) => {
   }
 });
 
-// Initial setup route (only works if no admin exists)
 app.post('/api/auth/setup', async (req: any, res: any) => {
   try {
     const { username, password } = req.body;
@@ -139,7 +125,6 @@ app.post('/api/auth/setup', async (req: any, res: any) => {
       return res.status(400).json({ error: 'Password must be at least 8 characters' });
     }
 
-    // Check if setup is already complete
     const adminExists = await prisma.systemSetting.findUnique({
       where: { key: 'admin_setup_complete' }
     });
@@ -148,11 +133,9 @@ app.post('/api/auth/setup', async (req: any, res: any) => {
       return res.status(400).json({ error: 'System already initialized' });
     }
 
-    // Hash password
     const saltRounds = 12;
     const passwordHash = await bcrypt.hash(password, saltRounds);
 
-    // Save admin credentials
     await prisma.systemSetting.createMany({
       data: [
         { key: 'admin_username', value: username },
@@ -161,7 +144,6 @@ app.post('/api/auth/setup', async (req: any, res: any) => {
       ]
     });
 
-    // Generate initial token
     const token = jwt.sign(
       { username, role: 'admin' },
       process.env.JWT_SECRET || 'fallback_secret',
@@ -183,7 +165,6 @@ app.post('/api/auth/setup', async (req: any, res: any) => {
   }
 });
 
-// Check if setup is required
 app.get('/api/auth/setup-status', async (req: any, res: any) => {
   try {
     const adminExists = await prisma.systemSetting.findUnique({
@@ -199,7 +180,6 @@ app.get('/api/auth/setup-status', async (req: any, res: any) => {
   }
 });
 
-// Verify token endpoint
 app.get('/api/auth/verify', authenticateToken, (req: any, res: any) => {
   res.json({
     valid: true,
@@ -207,7 +187,6 @@ app.get('/api/auth/verify', authenticateToken, (req: any, res: any) => {
   });
 });
 
-// Change password
 app.post('/api/auth/change-password', authenticateToken, async (req: any, res: any) => {
   try {
     const { currentPassword, newPassword } = req.body;
@@ -220,7 +199,6 @@ app.post('/api/auth/change-password', authenticateToken, async (req: any, res: a
       return res.status(400).json({ error: 'New password must be at least 8 characters' });
     }
 
-    // Get current password hash
     const adminPasswordHash = await prisma.systemSetting.findUnique({
       where: { key: 'admin_password_hash' }
     });
@@ -229,17 +207,14 @@ app.post('/api/auth/change-password', authenticateToken, async (req: any, res: a
       return res.status(500).json({ error: 'Admin credentials not found' });
     }
 
-    // Verify current password
     const passwordValid = await bcrypt.compare(currentPassword, adminPasswordHash.value);
     if (!passwordValid) {
       return res.status(401).json({ error: 'Current password is incorrect' });
     }
 
-    // Hash new password
     const saltRounds = 12;
     const newPasswordHash = await bcrypt.hash(newPassword, saltRounds);
 
-    // Update password
     await prisma.systemSetting.update({
       where: { key: 'admin_password_hash' },
       data: { value: newPasswordHash }
@@ -253,17 +228,13 @@ app.post('/api/auth/change-password', authenticateToken, async (req: any, res: a
   }
 });
 
-// Protect all other routes (add this AFTER the auth routes but BEFORE your existing routes)
+// Protect all other routes
 app.use('/api', (req: any, res: any, next: any) => {
-  // Skip auth for setup and login routes
   if (req.path.startsWith('/auth/')) {
     return next();
   }
-  
-  // Apply authentication to all other API routes
   authenticateToken(req, res, next);
 });
-
 
 // Residents routes
 app.get('/api/residents', async (req, res) => {
@@ -291,7 +262,6 @@ app.post('/api/residents', async (req: any, res: any) => {
   try {
     const { firstName, lastName, admissionDate, notes } = req.body;
     
-    // Validation
     if (!firstName || !lastName || !admissionDate) {
       return res.status(400).json({ error: 'First name, last name, and admission date are required' });
     }
@@ -317,7 +287,6 @@ app.put('/api/residents/:id', async (req: any, res: any) => {
     const { id } = req.params;
     const { firstName, lastName, admissionDate, notes } = req.body;
     
-    // Validation
     if (!firstName || !lastName || !admissionDate) {
       return res.status(400).json({ error: 'First name, last name, and admission date are required' });
     }
@@ -347,7 +316,6 @@ app.delete('/api/residents/:id', async (req: any, res: any) => {
   try {
     const { id } = req.params;
     
-    // Soft delete - set isActive to false instead of actually deleting
     const resident = await prisma.resident.update({
       where: { id: parseInt(id) },
       data: { isActive: false }
@@ -364,7 +332,6 @@ app.delete('/api/residents/:id', async (req: any, res: any) => {
   }
 });
 
-// Get single resident
 app.get('/api/residents/:id', async (req: any, res: any) => {
   try {
     const { id } = req.params;
@@ -483,7 +450,6 @@ app.delete('/api/qualifications/:id', async (req: any, res: any) => {
   try {
     const { id } = req.params;
     
-    // Check if qualification is in use
     const inUse = await prisma.residentQualification.findFirst({
       where: { qualificationId: parseInt(id) }
     });
@@ -541,7 +507,6 @@ app.post('/api/residents/:id/qualifications', async (req: any, res: any) => {
       return res.status(400).json({ error: 'Qualification ID is required' });
     }
 
-    // Check if resident already has this qualification
     const existing = await prisma.residentQualification.findFirst({
       where: {
         residentId: parseInt(id),
@@ -582,7 +547,6 @@ app.delete('/api/residents/:residentId/qualifications/:qualificationId', async (
   try {
     const { residentId, qualificationId } = req.params;
     
-    // Soft delete - set isActive to false
     const updated = await prisma.residentQualification.updateMany({
       where: {
         residentId: parseInt(residentId),
@@ -605,7 +569,6 @@ app.delete('/api/residents/:residentId/qualifications/:qualificationId', async (
   }
 });
 
-// Get all residents with their qualifications (useful for assignment overview)
 app.get('/api/residents-with-qualifications', async (req: any, res: any) => {
   try {
     const residents = await prisma.resident.findMany({
@@ -630,8 +593,6 @@ app.get('/api/residents-with-qualifications', async (req: any, res: any) => {
   }
 });
 
-// Add these routes to your existing server.ts file (after the qualifications routes)
-
 // Departments routes
 app.get('/api/departments', async (req: any, res: any) => {
   try {
@@ -648,7 +609,7 @@ app.get('/api/departments', async (req: any, res: any) => {
         }
       },
       orderBy: {
-        priority: 'desc' // Higher priority first (kitchen = highest)
+        priority: 'desc'
       }
     });
     res.json(departments);
@@ -720,7 +681,6 @@ app.delete('/api/departments/:id', async (req: any, res: any) => {
   try {
     const { id } = req.params;
     
-    // Check if department has shifts
     const shiftsCount = await prisma.shift.count({
       where: { departmentId: parseInt(id) }
     });
@@ -855,7 +815,6 @@ app.put('/api/shifts/:id', async (req: any, res: any) => {
       return res.status(400).json({ error: 'Department, name, start time, and end time are required' });
     }
 
-    // Delete existing roles and create new ones
     await prisma.shiftRole.deleteMany({
       where: { shiftId: parseInt(id) }
     });
@@ -912,7 +871,6 @@ app.delete('/api/shifts/:id', async (req: any, res: any) => {
   try {
     const { id } = req.params;
     
-    // Soft delete - set isActive to false
     const shift = await prisma.shift.update({
       where: { id: parseInt(id) },
       data: { isActive: false }
@@ -955,9 +913,7 @@ app.get('/api/shifts/:id', async (req: any, res: any) => {
   }
 });
 
-// Add these routes to your existing server.ts file (after the shifts routes)
-
-// Schedule generation and management routes
+// Schedule routes
 app.get('/api/schedule-periods', async (req: any, res: any) => {
   try {
     const periods = await prisma.schedulePeriod.findMany({
@@ -1080,7 +1036,6 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
 
     const assignments: any[] = [];
     const conflicts: any[] = [];
-    const usedResidents = new Set(); // Track residents assigned each day
 
     // Process each date
     for (const date of dates) {
@@ -1129,7 +1084,6 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
               if (shiftStart < availStart || shiftEnd > availEnd) return false;
 
               // Check appointment conflicts
-              const shiftDateTime = new Date(date);
               const shiftStartTime = new Date(date);
               const shiftEndTime = new Date(date);
               shiftStartTime.setHours(parseInt(shift.startTime.split(':')[0]), parseInt(shift.startTime.split(':')[1]));
@@ -1338,8 +1292,6 @@ app.delete('/api/shift-assignments/:id', async (req: any, res: any) => {
   }
 });
 
-// Add these routes to your existing server.ts file (after the schedule routes)
-
 // Appointment Types routes
 app.get('/api/appointment-types', async (req: any, res: any) => {
   try {
@@ -1387,263 +1339,9 @@ app.post('/api/appointment-types', async (req: any, res: any) => {
   }
 });
 
-// Appointments routes
-app.get('/api/appointments', async (req: any, res: any) => {
-  try {
-    const { residentId, startDate, endDate } = req.query;
-    
-    const where: any = { isActive: true };
-    
-    if (residentId) {
-      where.residentId = parseInt(residentId as string);
-    }
-    
-    if (startDate && endDate) {
-      where.startDateTime = {
-        gte: new Date(startDate as string),
-        lte: new Date(endDate as string)
-      };
-    }
+// ===== APPOINTMENTS ROUTES - SPECIFIC ROUTES FIRST =====
 
-    const appointments = await prisma.appointment.findMany({
-      where,
-      include: {
-        resident: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true
-          }
-        },
-        appointmentType: true
-      },
-      orderBy: [
-        { startDateTime: 'asc' }
-      ]
-    });
-    
-    res.json(appointments);
-  } catch (error: any) {
-    console.error('Error fetching appointments:', error);
-    res.status(500).json({ error: 'Failed to fetch appointments' });
-  }
-});
-
-// Update your appointment creation route in server.ts:
-app.post('/api/appointments', async (req: any, res: any) => {
-  try {
-    const { 
-      residentId, 
-      appointmentTypeId, 
-      title, 
-      startDateTime, 
-      endDateTime,
-      isRecurring,
-      recurringPattern,
-      notes 
-    } = req.body;
-    
-    if (!residentId || !appointmentTypeId || !title || !startDateTime || !endDateTime) {
-      return res.status(400).json({ error: 'Resident, appointment type, title, start time, and end time are required' });
-    }
-
-    // Function to treat input as Pacific Time and store it properly
-    function parsePacificTime(dateString: string): Date {
-      const cleanString = dateString.replace('Z', '');
-      const date = new Date(cleanString);
-      
-      // California is UTC-8 (PST) or UTC-7 (PDT)
-      // For simplicity, let's use UTC-7 (PDT) since it's summer
-      const pacificOffset = 7 * 60; // 7 hours in minutes
-      
-      // Add the offset to store the "local" time as if it were UTC
-      const adjustedDate = new Date(date.getTime() + (pacificOffset * 60 * 1000));
-      
-      return adjustedDate;
-    }
-
-    const startDate = parsePacificTime(startDateTime);
-    const endDate = parsePacificTime(endDateTime);
-    
-    console.log('=== TIMEZONE OFFSET FIX ===');
-    console.log('Received startDateTime:', startDateTime);
-    console.log('Original Date object:', new Date(startDateTime).toString());
-    console.log('Adjusted for Pacific Time:', startDate.toString());
-    console.log('Storing as UTC:', startDate.toISOString());
-    console.log('========================');
-
-    // Check for overlapping appointments
-    const overlapping = await prisma.appointment.findFirst({
-      where: {
-        residentId: parseInt(residentId),
-        isActive: true,
-        OR: [
-          {
-            startDateTime: {
-              lt: endDate
-            },
-            endDateTime: {
-              gt: startDate
-            }
-          }
-        ]
-      }
-    });
-
-    if (overlapping) {
-      return res.status(400).json({ error: 'Appointment overlaps with existing appointment' });
-    }
-
-    const appointment = await prisma.appointment.create({
-      data: {
-        residentId: parseInt(residentId),
-        appointmentTypeId: parseInt(appointmentTypeId),
-        title: title.trim(),
-        startDateTime: startDate,
-        endDateTime: endDate,
-        isRecurring: isRecurring || false,
-        recurringPattern: recurringPattern?.trim() || null,
-        notes: notes?.trim() || null
-      },
-      include: {
-        resident: {
-          select: {
-            firstName: true,
-            lastName: true
-          }
-        },
-        appointmentType: true
-      }
-    });
-    
-    res.status(201).json(appointment);
-  } catch (error: any) {
-    console.error('Error creating appointment:', error);
-    res.status(500).json({ error: 'Failed to create appointment' });
-  }
-});
-app.put('/api/appointments/:id', async (req: any, res: any) => {
-  try {
-    const { id } = req.params;
-    const { 
-      residentId, 
-      appointmentTypeId, 
-      title, 
-      startDateTime, 
-      endDateTime,
-      isRecurring,
-      recurringPattern,
-      notes 
-    } = req.body;
-    
-    if (!residentId || !appointmentTypeId || !title || !startDateTime || !endDateTime) {
-      return res.status(400).json({ error: 'Resident, appointment type, title, start time, and end time are required' });
-    }
-
-    // Use the SAME function as in your create route
-    function parsePacificTime(dateString: string): Date {
-      const cleanString = dateString.replace('Z', '');
-      const date = new Date(cleanString);
-      
-      // California is UTC-8 (PST) or UTC-7 (PDT)
-      // For simplicity, let's use UTC-7 (PDT) since it's summer
-      const pacificOffset = 7 * 60; // 7 hours in minutes
-      
-      // Add the offset to store the "local" time as if it were UTC
-      const adjustedDate = new Date(date.getTime() + (pacificOffset * 60 * 1000));
-      
-      return adjustedDate;
-    }
-
-    const startDate = parsePacificTime(startDateTime);
-    const endDate = parsePacificTime(endDateTime);
-    
-    console.log('=== UPDATE TIMEZONE OFFSET FIX ===');
-    console.log('Received startDateTime:', startDateTime);
-    console.log('Original Date object:', new Date(startDateTime).toString());
-    console.log('Adjusted for Pacific Time:', startDate.toString());
-    console.log('Storing as UTC:', startDate.toISOString());
-    console.log('===============================');
-
-    // Check for overlapping appointments (excluding current appointment)
-    const overlapping = await prisma.appointment.findFirst({
-      where: {
-        residentId: parseInt(residentId),
-        isActive: true,
-        id: { not: parseInt(id) },
-        OR: [
-          {
-            startDateTime: {
-              lt: endDate
-            },
-            endDateTime: {
-              gt: startDate
-            }
-          }
-        ]
-      }
-    });
-
-    if (overlapping) {
-      return res.status(400).json({ error: 'Appointment overlaps with existing appointment' });
-    }
-
-    const appointment = await prisma.appointment.update({
-      where: { id: parseInt(id) },
-      data: {
-        residentId: parseInt(residentId),
-        appointmentTypeId: parseInt(appointmentTypeId),
-        title: title.trim(),
-        startDateTime: startDate,
-        endDateTime: endDate,
-        isRecurring: isRecurring || false,
-        recurringPattern: recurringPattern?.trim() || null,
-        notes: notes?.trim() || null
-      },
-      include: {
-        resident: {
-          select: {
-            firstName: true,
-            lastName: true
-          }
-        },
-        appointmentType: true
-      }
-    });
-    
-    res.json(appointment);
-  } catch (error: any) {
-    console.error('Error updating appointment:', error);
-    if (error.code === 'P2025') {
-      res.status(404).json({ error: 'Appointment not found' });
-    } else {
-      res.status(500).json({ error: 'Failed to update appointment' });
-    }
-  }
-});
-
-app.delete('/api/appointments/:id', async (req: any, res: any) => {
-  try {
-    const { id } = req.params;
-    
-    // Soft delete - set isActive to false
-    const appointment = await prisma.appointment.update({
-      where: { id: parseInt(id) },
-      data: { isActive: false }
-    });
-    
-    res.json({ message: 'Appointment deleted successfully', appointment });
-  } catch (error: any) {
-    console.error('Error deleting appointment:', error);
-    if (error.code === 'P2025') {
-      res.status(404).json({ error: 'Appointment not found' });
-    } else {
-      res.status(500).json({ error: 'Failed to delete appointment' });
-    }
-  }
-});
-
-// 1. First, replace your existing bulk-recurring route with this updated version:
+// BULK RECURRING APPOINTMENTS (SPECIFIC ROUTE)
 app.post('/api/appointments/bulk-recurring', async (req: any, res: any) => {
   try {
     const { 
@@ -1725,9 +1423,7 @@ app.post('/api/appointments/bulk-recurring', async (req: any, res: any) => {
   }
 });
 
-// 2. Then add these two NEW routes:
-
-// Update recurring appointment series
+// UPDATE RECURRING SERIES (SPECIFIC ROUTE)
 app.put('/api/appointments/recurring-series', async (req: any, res: any) => {
   try {
     const { 
@@ -1827,10 +1523,9 @@ app.put('/api/appointments/recurring-series', async (req: any, res: any) => {
   }
 });
 
-// Replace your existing delete route with this corrected version:
-
+// DELETE RECURRING SERIES (SPECIFIC ROUTE)
 app.delete('/api/appointments/recurring-series', async (req: any, res: any) => {
-  console.log('🔴 DELETE ROUTE HIT - START');
+  console.log('🔴 DELETE RECURRING SERIES ROUTE HIT');
   console.log('🔴 Request body:', req.body);
   
   try {
@@ -1990,7 +1685,7 @@ app.delete('/api/appointments/recurring-series', async (req: any, res: any) => {
     
     return res.json(finalResponse);
     
-  } catch (error) {
+  } catch (error: any) {
     console.error('🔴 ERROR in delete route:', error);
     console.error('🔴 Error message:', error.message);
     console.error('🔴 Error stack:', error.stack);
@@ -2002,6 +1697,297 @@ app.delete('/api/appointments/recurring-series', async (req: any, res: any) => {
   }
 });
 
+// GET ALL APPOINTMENTS (GENERAL ROUTE)
+app.get('/api/appointments', async (req: any, res: any) => {
+  try {
+    const { residentId, startDate, endDate } = req.query;
+    
+    const where: any = { isActive: true };
+    
+    if (residentId) {
+      where.residentId = parseInt(residentId as string);
+    }
+    
+    if (startDate && endDate) {
+      where.startDateTime = {
+        gte: new Date(startDate as string),
+        lte: new Date(endDate as string)
+      };
+    }
+
+    const appointments = await prisma.appointment.findMany({
+      where,
+      include: {
+        resident: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true
+          }
+        },
+        appointmentType: true
+      },
+      orderBy: [
+        { startDateTime: 'asc' }
+      ]
+    });
+    
+    res.json(appointments);
+  } catch (error: any) {
+    console.error('Error fetching appointments:', error);
+    res.status(500).json({ error: 'Failed to fetch appointments' });
+  }
+});
+
+// CREATE SINGLE APPOINTMENT (GENERAL ROUTE)
+app.post('/api/appointments', async (req: any, res: any) => {
+  try {
+    const { 
+      residentId, 
+      appointmentTypeId, 
+      title, 
+      startDateTime, 
+      endDateTime,
+      isRecurring,
+      recurringPattern,
+      notes 
+    } = req.body;
+    
+    if (!residentId || !appointmentTypeId || !title || !startDateTime || !endDateTime) {
+      return res.status(400).json({ error: 'Resident, appointment type, title, start time, and end time are required' });
+    }
+
+    // Function to treat input as Pacific Time and store it properly
+    function parsePacificTime(dateString: string): Date {
+      const cleanString = dateString.replace('Z', '');
+      const date = new Date(cleanString);
+      
+      // California is UTC-8 (PST) or UTC-7 (PDT)
+      // For simplicity, let's use UTC-7 (PDT) since it's summer
+      const pacificOffset = 7 * 60; // 7 hours in minutes
+      
+      // Add the offset to store the "local" time as if it were UTC
+      const adjustedDate = new Date(date.getTime() + (pacificOffset * 60 * 1000));
+      
+      return adjustedDate;
+    }
+
+    const startDate = parsePacificTime(startDateTime);
+    const endDate = parsePacificTime(endDateTime);
+    
+    console.log('=== TIMEZONE OFFSET FIX ===');
+    console.log('Received startDateTime:', startDateTime);
+    console.log('Original Date object:', new Date(startDateTime).toString());
+    console.log('Adjusted for Pacific Time:', startDate.toString());
+    console.log('Storing as UTC:', startDate.toISOString());
+    console.log('========================');
+
+    // Check for overlapping appointments
+    const overlapping = await prisma.appointment.findFirst({
+      where: {
+        residentId: parseInt(residentId),
+        isActive: true,
+        OR: [
+          {
+            startDateTime: {
+              lt: endDate
+            },
+            endDateTime: {
+              gt: startDate
+            }
+          }
+        ]
+      }
+    });
+
+    if (overlapping) {
+      return res.status(400).json({ error: 'Appointment overlaps with existing appointment' });
+    }
+
+    const appointment = await prisma.appointment.create({
+      data: {
+        residentId: parseInt(residentId),
+        appointmentTypeId: parseInt(appointmentTypeId),
+        title: title.trim(),
+        startDateTime: startDate,
+        endDateTime: endDate,
+        isRecurring: isRecurring || false,
+        recurringPattern: recurringPattern?.trim() || null,
+        notes: notes?.trim() || null
+      },
+      include: {
+        resident: {
+          select: {
+            firstName: true,
+            lastName: true
+          }
+        },
+        appointmentType: true
+      }
+    });
+    
+    res.status(201).json(appointment);
+  } catch (error: any) {
+    console.error('Error creating appointment:', error);
+    res.status(500).json({ error: 'Failed to create appointment' });
+  }
+});
+
+// UPDATE SINGLE APPOINTMENT (PARAMETERIZED ROUTE)
+app.put('/api/appointments/:id', async (req: any, res: any) => {
+  try {
+    const { id } = req.params;
+    const { 
+      residentId, 
+      appointmentTypeId, 
+      title, 
+      startDateTime, 
+      endDateTime,
+      isRecurring,
+      recurringPattern,
+      notes 
+    } = req.body;
+    
+    if (!residentId || !appointmentTypeId || !title || !startDateTime || !endDateTime) {
+      return res.status(400).json({ error: 'Resident, appointment type, title, start time, and end time are required' });
+    }
+
+    // Use the SAME function as in your create route
+    function parsePacificTime(dateString: string): Date {
+      const cleanString = dateString.replace('Z', '');
+      const date = new Date(cleanString);
+      
+      // California is UTC-8 (PST) or UTC-7 (PDT)
+      // For simplicity, let's use UTC-7 (PDT) since it's summer
+      const pacificOffset = 7 * 60; // 7 hours in minutes
+      
+      // Add the offset to store the "local" time as if it were UTC
+      const adjustedDate = new Date(date.getTime() + (pacificOffset * 60 * 1000));
+      
+      return adjustedDate;
+    }
+
+    const startDate = parsePacificTime(startDateTime);
+    const endDate = parsePacificTime(endDateTime);
+    
+    console.log('=== UPDATE TIMEZONE OFFSET FIX ===');
+    console.log('Received startDateTime:', startDateTime);
+    console.log('Original Date object:', new Date(startDateTime).toString());
+    console.log('Adjusted for Pacific Time:', startDate.toString());
+    console.log('Storing as UTC:', startDate.toISOString());
+    console.log('===============================');
+
+    // Check for overlapping appointments (excluding current appointment)
+    const overlapping = await prisma.appointment.findFirst({
+      where: {
+        residentId: parseInt(residentId),
+        isActive: true,
+        id: { not: parseInt(id) },
+        OR: [
+          {
+            startDateTime: {
+              lt: endDate
+            },
+            endDateTime: {
+              gt: startDate
+            }
+          }
+        ]
+      }
+    });
+
+    if (overlapping) {
+      return res.status(400).json({ error: 'Appointment overlaps with existing appointment' });
+    }
+
+    const appointment = await prisma.appointment.update({
+      where: { id: parseInt(id) },
+      data: {
+        residentId: parseInt(residentId),
+        appointmentTypeId: parseInt(appointmentTypeId),
+        title: title.trim(),
+        startDateTime: startDate,
+        endDateTime: endDate,
+        isRecurring: isRecurring || false,
+        recurringPattern: recurringPattern?.trim() || null,
+        notes: notes?.trim() || null
+      },
+      include: {
+        resident: {
+          select: {
+            firstName: true,
+            lastName: true
+          }
+        },
+        appointmentType: true
+      }
+    });
+    
+    res.json(appointment);
+  } catch (error: any) {
+    console.error('Error updating appointment:', error);
+    if (error.code === 'P2025') {
+      res.status(404).json({ error: 'Appointment not found' });
+    } else {
+      res.status(500).json({ error: 'Failed to update appointment' });
+    }
+  }
+});
+
+// DELETE SINGLE APPOINTMENT (PARAMETERIZED ROUTE)
+app.delete('/api/appointments/:id', async (req: any, res: any) => {
+  console.log('🔴 SINGLE APPOINTMENT DELETE ROUTE HIT');
+  console.log('🔴 ID from params:', req.params.id);
+  
+  try {
+    const { id } = req.params;
+    
+    if (!id) {
+      return res.status(400).json({ error: 'Appointment ID is required' });
+    }
+    
+    const appointmentId = parseInt(id);
+    if (isNaN(appointmentId)) {
+      return res.status(400).json({ error: 'Invalid appointment ID format' });
+    }
+    
+    console.log('🔴 Parsed appointment ID:', appointmentId);
+    
+    // Check if appointment exists first
+    const existingAppointment = await prisma.appointment.findUnique({
+      where: { id: appointmentId }
+    });
+    
+    if (!existingAppointment) {
+      console.log('🔴 ERROR: Appointment not found');
+      return res.status(404).json({ error: 'Appointment not found' });
+    }
+    
+    console.log('🔴 Found appointment:', existingAppointment.title);
+    
+    // Soft delete - set isActive to false
+    const appointment = await prisma.appointment.update({
+      where: { id: appointmentId },
+      data: { isActive: false }
+    });
+    
+    console.log('🔴 Successfully deleted appointment');
+    res.json({ message: 'Appointment deleted successfully', appointment });
+  } catch (error: any) {
+    console.error('🔴 Error deleting single appointment:', error);
+    console.error('🔴 Error message:', error.message);
+    console.error('🔴 Error stack:', error.stack);
+    
+    if (error.code === 'P2025') {
+      res.status(404).json({ error: 'Appointment not found' });
+    } else {
+      res.status(500).json({ 
+        error: 'Failed to delete appointment',
+        details: error.message 
+      });
+    }
+  }
+});
 
 // Error handling middleware
 app.use((error: any, req: express.Request, res: express.Response, next: express.NextFunction) => {

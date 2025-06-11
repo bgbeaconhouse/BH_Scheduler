@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { scheduleApi } from '../api/client';
+import { scheduleApi, residentsApi } from '../api/client';
 
 interface SchedulePeriod {
   id: number;
@@ -43,16 +43,27 @@ interface Conflict {
   severity: string;
 }
 
+interface Resident {
+  id: number;
+  firstName: string;
+  lastName: string;
+}
+
 const ScheduleManagement: React.FC = () => {
   const [periods, setPeriods] = useState<SchedulePeriod[]>([]);
   const [selectedPeriod, setSelectedPeriod] = useState<SchedulePeriod | null>(null);
   const [assignments, setAssignments] = useState<ShiftAssignment[]>([]);
   const [conflicts, setConflicts] = useState<Conflict[]>([]);
+  const [residents, setResidents] = useState<Resident[]>([]);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string>('');
-  const [activeTab, setActiveTab] = useState<'periods' | 'schedule' | 'conflicts'>('periods');
+  const [viewMode, setViewMode] = useState<'calendar' | 'daily' | 'edit'>('calendar');
   const [showNewPeriodForm, setShowNewPeriodForm] = useState(false);
+  const [editingAssignment, setEditingAssignment] = useState<ShiftAssignment | null>(null);
+  const [newResidentId, setNewResidentId] = useState<string>('');
+  const [newStatus, setNewStatus] = useState<string>('scheduled');
+  const [notes, setNotes] = useState<string>('');
   
   const [newPeriod, setNewPeriod] = useState({
     name: '',
@@ -62,6 +73,7 @@ const ScheduleManagement: React.FC = () => {
 
   useEffect(() => {
     fetchData();
+    fetchResidents();
   }, []);
 
   useEffect(() => {
@@ -80,6 +92,15 @@ const ScheduleManagement: React.FC = () => {
       setError('Failed to load data');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchResidents = async () => {
+    try {
+      const response = await residentsApi.getAll();
+      setResidents(response.data);
+    } catch (error: any) {
+      console.error('Failed to fetch residents:', error);
     }
   };
 
@@ -111,9 +132,7 @@ const ScheduleManagement: React.FC = () => {
     }
   };
 
-  const handleCreatePeriod = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
+  const handleCreatePeriod = async () => {
     if (!newPeriod.name || !newPeriod.startDate || !newPeriod.endDate) {
       setError('All fields are required');
       return;
@@ -130,60 +149,73 @@ const ScheduleManagement: React.FC = () => {
     }
   };
 
- // FIXED: Frontend schedule generation handler with accurate reporting
-const handleGenerateSchedule = async () => {
-  if (!selectedPeriod) return;
-  
-  const confirmed = confirm(
-    'This will clear any existing assignments and generate a new schedule. Continue?'
-  );
-  
-  if (!confirmed) return;
+  const handleGenerateSchedule = async () => {
+    if (!selectedPeriod) return;
+    
+    const confirmed = confirm(
+      'This will clear any existing assignments and generate a new schedule. Continue?'
+    );
+    
+    if (!confirmed) return;
 
-  setGenerating(true);
-  try {
-    console.log('🚀 Starting schedule generation...');
-    
-    const response = await scheduleApi.generateSchedule({
-      schedulePeriodId: selectedPeriod.id,
-      startDate: selectedPeriod.startDate,
-      endDate: selectedPeriod.endDate
-    });
-    
-    console.log('📊 Generation response:', response.data);
-    
-    // Refresh the data to get accurate counts
-    await fetchAssignments();
-    await fetchConflicts();
-    
-    // Show ACCURATE stats from the response
-    const stats = response.data.stats;
-    
-    let message = `Schedule Generation Complete!\n\n`;
-    message += `📊 Generated: ${stats.assignmentsGenerated} assignments\n`;
-    message += `✅ Successfully Created: ${stats.assignmentsCreated} assignments\n`;
-    
-    if (stats.creationErrors > 0) {
-      message += `❌ Creation Errors: ${stats.creationErrors}\n`;
+    setGenerating(true);
+    try {
+      const response = await scheduleApi.generateSchedule({
+        schedulePeriodId: selectedPeriod.id,
+        startDate: selectedPeriod.startDate,
+        endDate: selectedPeriod.endDate
+      });
+      
+      await fetchAssignments();
+      await fetchConflicts();
+      
+      const stats = response.data.stats;
+      alert(`Schedule generated!\n✅ ${stats.assignmentsCreated} assignments created\n⚠️ ${stats.conflictsFound} conflicts found`);
+    } catch (error: any) {
+      setError(error.message || 'Failed to generate schedule');
+    } finally {
+      setGenerating(false);
     }
-    
-    message += `⚠️ Conflicts Found: ${stats.conflictsFound}\n`;
-    message += `📝 Conflict Records: ${stats.conflictsCreated}`;
-    
-    // Show breakdown if there are discrepancies
-    if (stats.assignmentsGenerated !== stats.assignmentsCreated) {
-      message += `\n\n🔍 Note: ${stats.assignmentsGenerated - stats.assignmentsCreated} assignments were duplicates or failed validation.`;
+  };
+
+  const handleEditAssignment = (assignment: ShiftAssignment) => {
+    setEditingAssignment(assignment);
+    setNewResidentId(assignment.residentId.toString());
+    setNewStatus(assignment.status);
+    setNotes(assignment.notes || '');
+    setError('');
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editingAssignment) return;
+
+    try {
+      await scheduleApi.updateAssignment(editingAssignment.id, {
+        residentId: newResidentId ? parseInt(newResidentId) : undefined,
+        status: newStatus,
+        notes: notes.trim() || undefined
+      });
+
+      setEditingAssignment(null);
+      await fetchAssignments();
+      setError('');
+    } catch (error: any) {
+      setError(error.message || 'Failed to update assignment');
     }
-    
-    alert(message);
-    
-  } catch (error: any) {
-    console.error('💥 Schedule generation failed:', error);
-    setError(error.message || 'Failed to generate schedule');
-  } finally {
-    setGenerating(false);
-  }
-};
+  };
+
+  const handleDeleteAssignment = async (assignmentId: number) => {
+    if (!confirm('Are you sure you want to delete this assignment?')) return;
+
+    try {
+      await scheduleApi.deleteAssignment(assignmentId);
+      await fetchAssignments();
+      setError('');
+    } catch (error: any) {
+      setError(error.message || 'Failed to delete assignment');
+    }
+  };
+
   const getWeekDates = (startDate: string, endDate: string) => {
     const start = new Date(startDate);
     const end = new Date(endDate);
@@ -201,26 +233,198 @@ const handleGenerateSchedule = async () => {
     return assignments.filter(a => a.assignedDate.split('T')[0] === dateStr);
   };
 
-  const getDayName = (date: Date) => {
-    return date.toLocaleDateString('en-US', { weekday: 'short' });
-  };
-
-  const formatDate = (date: Date) => {
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  };
-
   const getConflictsForDate = (date: Date) => {
     const dateStr = date.toISOString().split('T')[0];
     return conflicts.filter(c => c.conflictDate.split('T')[0] === dateStr);
   };
 
-  const getTotalStaffAssigned = () => {
-    return assignments.length;
+  const formatTime = (time: string) => {
+    const [hours, minutes] = time.split(':');
+    const hour = parseInt(hours);
+    const ampm = hour >= 12 ? 'PM' : 'AM';
+    const displayHour = hour % 12 || 12;
+    return `${displayHour}:${minutes} ${ampm}`;
   };
 
-  const getTotalConflicts = () => {
-    return conflicts.filter(c => c.severity === 'error').length;
+  const getDepartmentColor = (departmentName: string) => {
+    const colors: Record<string, string> = {
+      'kitchen': 'bg-orange-100 border-orange-300 text-orange-800',
+      'shelter_runs': 'bg-blue-100 border-blue-300 text-blue-800',
+      'thrift_stores': 'bg-green-100 border-green-300 text-green-800',
+      'maintenance': 'bg-purple-100 border-purple-300 text-purple-800'
+    };
+    return colors[departmentName] || 'bg-gray-100 border-gray-300 text-gray-800';
   };
+
+  const getStatusColor = (status: string) => {
+    const colors: Record<string, string> = {
+      'scheduled': 'bg-blue-100 text-blue-800',
+      'completed': 'bg-green-100 text-green-800',
+      'no_show': 'bg-red-100 text-red-800',
+      'covered': 'bg-yellow-100 text-yellow-800'
+    };
+    return colors[status] || 'bg-gray-100 text-gray-800';
+  };
+
+  const getDepartmentIcon = (departmentName: string) => {
+    const icons: Record<string, string> = {
+      'kitchen': '🍳',
+      'shelter_runs': '🚐',
+      'thrift_stores': '🏪',
+      'maintenance': '🔧'
+    };
+    return icons[departmentName] || '📋';
+  };
+
+  const groupAssignmentsByDepartment = (dayAssignments: ShiftAssignment[]) => {
+    const groups: Record<string, ShiftAssignment[]> = {};
+    
+    dayAssignments.forEach(assignment => {
+      const dept = assignment.shift.department.name;
+      if (!groups[dept]) groups[dept] = [];
+      groups[dept].push(assignment);
+    });
+    
+    const sortedDepts = Object.keys(groups).sort((a, b) => {
+      const priorityA = dayAssignments.find(a2 => a2.shift.department.name === a)?.shift.department.priority || 0;
+      const priorityB = dayAssignments.find(a2 => a2.shift.department.name === b)?.shift.department.priority || 0;
+      return priorityB - priorityA;
+    });
+    
+    const sortedGroups: Record<string, ShiftAssignment[]> = {};
+    sortedDepts.forEach(dept => {
+      sortedGroups[dept] = groups[dept].sort((a, b) => a.shift.startTime.localeCompare(b.shift.startTime));
+    });
+    
+    return sortedGroups;
+  };
+
+  // Calendar View
+  const CalendarView = () => (
+    <div className="bg-white rounded-lg shadow overflow-hidden">
+      <div className="grid grid-cols-1 md:grid-cols-7 gap-1 bg-gray-200 p-1">
+        {getWeekDates(selectedPeriod!.startDate, selectedPeriod!.endDate).map(date => {
+          const dayAssignments = getAssignmentsForDate(date);
+          const dayConflicts = getConflictsForDate(date);
+          const departmentGroups = groupAssignmentsByDepartment(dayAssignments);
+          
+          return (
+            <div key={date.toISOString()} className="bg-white rounded min-h-96">
+              <div className="p-3 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-indigo-50">
+                <div className="font-bold text-gray-900 text-lg">
+                  {date.toLocaleDateString('en-US', { weekday: 'short' })}
+                </div>
+                <div className="text-sm text-gray-600">
+                  {date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                </div>
+                <div className="flex justify-between items-center mt-2">
+                  <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">
+                    {dayAssignments.length} staff
+                  </span>
+                  {dayConflicts.length > 0 && (
+                    <span className="text-xs bg-red-100 text-red-800 px-2 py-1 rounded-full">
+                      {dayConflicts.length} conflicts
+                    </span>
+                  )}
+                </div>
+              </div>
+              
+              <div className="p-2 space-y-3">
+                {Object.keys(departmentGroups).length === 0 ? (
+                  <div className="text-xs text-gray-400 italic text-center py-8">
+                    No assignments
+                  </div>
+                ) : (
+                  Object.entries(departmentGroups).map(([deptName, deptAssignments]) => (
+                    <div key={deptName} className="space-y-1">
+                      <div className="flex items-center space-x-1 mb-2">
+                        <span className="text-sm">{getDepartmentIcon(deptName)}</span>
+                        <span className="text-xs font-semibold text-gray-700 uppercase tracking-wide">
+                          {deptName.replace('_', ' ')}
+                        </span>
+                      </div>
+                      
+                      {deptAssignments.map(assignment => (
+                        <div
+                          key={assignment.id}
+                          className={`text-xs p-2 rounded-lg border-l-3 ${getDepartmentColor(deptName)}`}
+                        >
+                          <div className="font-medium">
+                            {assignment.shift.name}
+                          </div>
+                          <div className="text-gray-600 mt-1">
+                            {formatTime(assignment.shift.startTime)} - {formatTime(assignment.shift.endTime)}
+                          </div>
+                          <div className="font-semibold mt-1">
+                            {assignment.resident.firstName} {assignment.resident.lastName}
+                          </div>
+                          <div className="text-gray-500 capitalize">
+                            {assignment.roleTitle.replace('_', ' ')}
+                          </div>
+                          {assignment.status !== 'scheduled' && (
+                            <div className={`text-xs mt-1 font-medium ${
+                              assignment.status === 'completed' ? 'text-green-600' :
+                              assignment.status === 'no_show' ? 'text-red-600' :
+                              'text-yellow-600'
+                            }`}>
+                              {assignment.status.replace('_', ' ').toUpperCase()}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+
+  // Edit View
+  const EditView = () => (
+    <div className="space-y-4">
+      {assignments.map(assignment => (
+        <div key={assignment.id} className="bg-white rounded-lg shadow p-4">
+          <div className="flex justify-between items-center">
+            <div>
+              <h4 className="font-medium text-gray-900">
+                {assignment.shift.department.name.replace('_', ' ')} - {assignment.shift.name}
+              </h4>
+              <p className="text-sm text-gray-600">
+                {formatTime(assignment.shift.startTime)} - {formatTime(assignment.shift.endTime)} • {assignment.roleTitle.replace('_', ' ')}
+              </p>
+              <p className="text-sm font-medium text-gray-900">
+                {assignment.resident.firstName} {assignment.resident.lastName}
+              </p>
+              <p className="text-xs text-gray-500">
+                {new Date(assignment.assignedDate).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
+              </p>
+            </div>
+            <div className="flex items-center space-x-2">
+              <span className={`px-2 py-1 text-xs rounded-full font-medium ${getStatusColor(assignment.status)}`}>
+                {assignment.status.replace('_', ' ')}
+              </span>
+              <button
+                onClick={() => handleEditAssignment(assignment)}
+                className="text-blue-600 hover:text-blue-900 text-sm"
+              >
+                Edit
+              </button>
+              <button
+                onClick={() => handleDeleteAssignment(assignment.id)}
+                className="text-red-600 hover:text-red-900 text-sm"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 
   if (loading) {
     return (
@@ -232,383 +436,233 @@ const handleGenerateSchedule = async () => {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-bold text-gray-900">Schedule Generator</h2>
-        <div className="flex space-x-4">
-          <button
-            onClick={() => setActiveTab('periods')}
-            className={`px-4 py-2 rounded-lg transition-colors ${
-              activeTab === 'periods'
-                ? 'bg-blue-600 text-white'
-                : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-            }`}
-          >
-            Schedule Periods
-          </button>
-          <button
-            onClick={() => setActiveTab('schedule')}
-            className={`px-4 py-2 rounded-lg transition-colors ${
-              activeTab === 'schedule'
-                ? 'bg-blue-600 text-white'
-                : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-            }`}
-            disabled={!selectedPeriod}
-          >
-            Weekly Schedule
-          </button>
-          <button
-            onClick={() => setActiveTab('conflicts')}
-            className={`px-4 py-2 rounded-lg transition-colors ${
-              activeTab === 'conflicts'
-                ? 'bg-blue-600 text-white'
-                : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-            }`}
-            disabled={!selectedPeriod}
-          >
-            Conflicts ({getTotalConflicts()})
-          </button>
-        </div>
+        <h2 className="text-2xl font-bold text-gray-900">Work Schedule</h2>
+        <button
+          onClick={() => setShowNewPeriodForm(true)}
+          className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors"
+        >
+          Create New Period
+        </button>
       </div>
 
-      {/* Error Message */}
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
           {error}
         </div>
       )}
 
-      {/* Schedule Periods Tab */}
-      {activeTab === 'periods' && (
-        <>
-          <div className="flex justify-between items-center">
-            <h3 className="text-lg font-semibold">Schedule Periods</h3>
-            <button
-              onClick={() => setShowNewPeriodForm(true)}
-              className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors"
+      <div className="bg-white rounded-lg shadow p-6">
+        <h3 className="text-lg font-semibold mb-4">Select Schedule Period</h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {periods.map(period => (
+            <div
+              key={period.id}
+              onClick={() => setSelectedPeriod(period)}
+              className={`p-4 rounded-lg border-2 cursor-pointer transition-colors ${
+                selectedPeriod?.id === period.id
+                  ? 'border-blue-500 bg-blue-50'
+                  : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+              }`}
             >
-              Create New Period
-            </button>
-          </div>
-
-          {/* New Period Form Modal */}
-          {showNewPeriodForm && (
-            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-              <div className="bg-white rounded-lg p-6 w-full max-w-md mx-4">
-                <h3 className="text-lg font-semibold mb-4">Create Schedule Period</h3>
-                
-                <form onSubmit={handleCreatePeriod} className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Period Name *
-                    </label>
-                    <input
-                      type="text"
-                      value={newPeriod.name}
-                      onChange={(e) => setNewPeriod({...newPeriod, name: e.target.value})}
-                      placeholder="e.g., Week of June 9, 2025"
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      required
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Start Date *
-                    </label>
-                    <input
-                      type="date"
-                      value={newPeriod.startDate}
-                      onChange={(e) => setNewPeriod({...newPeriod, startDate: e.target.value})}
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      required
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      End Date *
-                    </label>
-                    <input
-                      type="date"
-                      value={newPeriod.endDate}
-                      onChange={(e) => setNewPeriod({...newPeriod, endDate: e.target.value})}
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      required
-                    />
-                  </div>
-
-                  <div className="flex space-x-3 pt-4">
-                    <button
-                      type="submit"
-                      className="flex-1 bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 transition-colors"
-                    >
-                      Create Period
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setShowNewPeriodForm(false)}
-                      className="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-400 transition-colors"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </form>
+              <div className="font-medium">{period.name}</div>
+              <div className="text-sm text-gray-500 mt-1">
+                {new Date(period.startDate).toLocaleDateString()} - {new Date(period.endDate).toLocaleDateString()}
               </div>
             </div>
-          )}
+          ))}
+        </div>
+      </div>
 
-          {/* Periods List */}
-          <div className="bg-white rounded-lg shadow">
-            {periods.length === 0 ? (
-              <div className="px-6 py-8 text-center text-gray-500">
-                <p className="text-lg">No schedule periods created yet</p>
-                <p className="text-sm">Create your first schedule period to start generating work schedules</p>
-              </div>
-            ) : (
-              <div className="divide-y divide-gray-200">
-                {periods.map(period => (
-                  <div key={period.id} className="px-6 py-4">
-                    <div className="flex justify-between items-center">
-                      <div>
-                        <h4 className="font-medium text-gray-900">{period.name}</h4>
-                        <p className="text-sm text-gray-500 mt-1">
-                          {new Date(period.startDate).toLocaleDateString()} - {new Date(period.endDate).toLocaleDateString()}
-                        </p>
-                        <p className="text-sm text-gray-500 mt-1">
-                          {period.assignments?.length || 0} assignments
-                        </p>
-                      </div>
-                      <div className="flex space-x-2">
-                        <button
-                          onClick={() => {
-                            setSelectedPeriod(period);
-                            setActiveTab('schedule');
-                          }}
-                          className="text-blue-600 hover:text-blue-900 text-sm"
-                        >
-                          View Schedule
-                        </button>
-                        <button
-                          onClick={() => setSelectedPeriod(period)}
-                          className={`px-3 py-1 text-sm rounded ${
-                            selectedPeriod?.id === period.id
-                              ? 'bg-blue-100 text-blue-800'
-                              : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                          }`}
-                        >
-                          Select
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </>
-      )}
-
-      {/* Weekly Schedule Tab */}
-      {activeTab === 'schedule' && selectedPeriod && (
-        <>
+      {selectedPeriod && (
+        <div className="bg-white rounded-lg shadow p-6">
           <div className="flex justify-between items-center">
             <div>
               <h3 className="text-lg font-semibold">{selectedPeriod.name}</h3>
               <p className="text-sm text-gray-600">
-                {getTotalStaffAssigned()} total assignments • {getTotalConflicts()} conflicts
+                {assignments.length} assignments • {conflicts.filter(c => c.severity === 'error').length} conflicts
               </p>
             </div>
-            <button
-              onClick={handleGenerateSchedule}
-              disabled={generating}
-              className="bg-purple-600 text-white px-6 py-2 rounded-lg hover:bg-purple-700 transition-colors disabled:bg-gray-400"
-            >
-              {generating ? 'Generating...' : 'Generate Schedule'}
-            </button>
-          </div>
-
-          {/* Weekly Calendar View */}
-          <div className="bg-white rounded-lg shadow overflow-hidden">
-            <div className="grid grid-cols-1 md:grid-cols-7 gap-px bg-gray-200">
-              {getWeekDates(selectedPeriod.startDate, selectedPeriod.endDate).map(date => {
-                const dayAssignments = getAssignmentsForDate(date);
-                const dayConflicts = getConflictsForDate(date);
-                
-                return (
-                  <div key={date.toISOString()} className="bg-white min-h-96">
-                    {/* Day Header */}
-                    <div className="p-3 border-b border-gray-200 bg-gray-50">
-                      <div className="font-medium text-gray-900">{getDayName(date)}</div>
-                      <div className="text-sm text-gray-500">{formatDate(date)}</div>
-                      {dayConflicts.length > 0 && (
-                        <div className="text-xs text-red-600 mt-1">
-                          {dayConflicts.length} conflicts
-                        </div>
-                      )}
-                    </div>
-                    
-                    {/* Day Content */}
-                    <div className="p-2 space-y-1">
-                      {dayAssignments.length === 0 ? (
-                        <div className="text-xs text-gray-400 italic">No assignments</div>
-                      ) : (
-                        dayAssignments
-                          .sort((a, b) => a.shift.startTime.localeCompare(b.shift.startTime))
-                          .map(assignment => (
-                            <div
-                              key={assignment.id}
-                              className="text-xs p-2 rounded border-l-2 border-blue-400 bg-blue-50"
-                            >
-                              <div className="font-medium text-gray-900">
-                                {assignment.shift.name}
-                              </div>
-                              <div className="text-gray-600">
-                                {assignment.shift.startTime} - {assignment.shift.endTime}
-                              </div>
-                              <div className="text-blue-700 font-medium">
-                                {assignment.resident.firstName} {assignment.resident.lastName}
-                              </div>
-                              <div className="text-gray-500">
-                                {assignment.roleTitle}
-                              </div>
-                              {assignment.status !== 'scheduled' && (
-                                <div className={`text-xs mt-1 ${
-                                  assignment.status === 'completed' ? 'text-green-600' :
-                                  assignment.status === 'no_show' ? 'text-red-600' :
-                                  'text-yellow-600'
-                                }`}>
-                                  {assignment.status.replace('_', ' ')}
-                                </div>
-                              )}
-                            </div>
-                          ))
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
+            <div className="flex space-x-4">
+              <div className="flex bg-gray-100 rounded-lg p-1">
+                <button
+                  onClick={() => setViewMode('calendar')}
+                  className={`px-3 py-1 text-sm rounded ${
+                    viewMode === 'calendar' ? 'bg-white shadow text-blue-600' : 'text-gray-600'
+                  }`}
+                >
+                  📅 Calendar
+                </button>
+                <button
+                  onClick={() => setViewMode('edit')}
+                  className={`px-3 py-1 text-sm rounded ${
+                    viewMode === 'edit' ? 'bg-white shadow text-blue-600' : 'text-gray-600'
+                  }`}
+                >
+                  ✏️ Edit
+                </button>
+              </div>
+              <button
+                onClick={handleGenerateSchedule}
+                disabled={generating}
+                className="bg-purple-600 text-white px-6 py-2 rounded-lg hover:bg-purple-700 transition-colors disabled:bg-gray-400"
+              >
+                {generating ? 'Generating...' : 'Generate Schedule'}
+              </button>
             </div>
           </div>
-
-          {/* Daily Summary */}
-          <div className="bg-white rounded-lg shadow p-6">
-            <h4 className="text-lg font-semibold mb-4">Schedule Summary</h4>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="text-center">
-                <div className="text-2xl font-bold text-blue-600">
-                  {getTotalStaffAssigned()}
-                </div>
-                <div className="text-sm text-gray-500">Total Assignments</div>
-              </div>
-              <div className="text-center">
-                <div className="text-2xl font-bold text-green-600">
-                  {assignments.filter(a => a.status === 'scheduled').length}
-                </div>
-                <div className="text-sm text-gray-500">Scheduled</div>
-              </div>
-              <div className="text-center">
-                <div className="text-2xl font-bold text-red-600">
-                  {getTotalConflicts()}
-                </div>
-                <div className="text-sm text-gray-500">Conflicts</div>
-              </div>
-              <div className="text-center">
-                <div className="text-2xl font-bold text-purple-600">
-                  {assignments.filter(a => a.status === 'completed').length}
-                </div>
-                <div className="text-sm text-gray-500">Completed</div>
-              </div>
-            </div>
-          </div>
-        </>
+        </div>
       )}
 
-      {/* Conflicts Tab */}
-      {activeTab === 'conflicts' && selectedPeriod && (
-        <>
-          <div className="flex justify-between items-center">
-            <h3 className="text-lg font-semibold">Schedule Conflicts</h3>
-            <div className="text-sm text-gray-600">
-              {conflicts.length} total conflicts found
-            </div>
-          </div>
-
-          <div className="bg-white rounded-lg shadow">
-            {conflicts.length === 0 ? (
-              <div className="px-6 py-8 text-center text-gray-500">
-                <div className="text-green-600 text-lg">🎉 No conflicts found!</div>
-                <p className="text-sm">All shifts have been successfully assigned.</p>
-              </div>
-            ) : (
-              <div className="divide-y divide-gray-200">
-                {conflicts.map(conflict => (
-                  <div key={conflict.id} className="px-6 py-4">
-                    <div className="flex items-start space-x-3">
-                      <div className={`flex-shrink-0 w-3 h-3 rounded-full mt-1 ${
-                        conflict.severity === 'error' ? 'bg-red-400' :
-                        conflict.severity === 'warning' ? 'bg-yellow-400' :
-                        'bg-blue-400'
-                      }`}></div>
-                      <div className="flex-1">
-                        <div className="flex justify-between items-start">
-                          <div>
-                            <div className="font-medium text-gray-900">
-                              {conflict.conflictType.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
-                            </div>
-                            <div className="text-sm text-gray-600 mt-1">
-                              {conflict.description}
-                            </div>
-                            <div className="text-sm text-gray-500 mt-1">
-                              {new Date(conflict.conflictDate).toLocaleDateString('en-US', {
-                                weekday: 'long',
-                                month: 'short',
-                                day: 'numeric'
-                              })}
-                            </div>
-                          </div>
-                          <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                            conflict.severity === 'error' ? 'bg-red-100 text-red-800' :
-                            conflict.severity === 'warning' ? 'bg-yellow-100 text-yellow-800' :
-                            'bg-blue-100 text-blue-800'
-                          }`}>
-                            {conflict.severity}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Conflict Resolution Tips */}
-          {conflicts.length > 0 && (
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-              <h4 className="font-medium text-blue-900 mb-2">💡 Conflict Resolution Tips</h4>
-              <ul className="text-sm text-blue-800 space-y-1">
-                <li>• Check if more residents need the required qualifications</li>
-                <li>• Review resident availability patterns</li>
-                <li>• Consider adjusting shift requirements or schedules</li>
-                <li>• Look for appointment scheduling conflicts</li>
-                <li>• Verify tenure requirements (6+ months for thrift stores)</li>
-              </ul>
-            </div>
-          )}
-        </>
+      {selectedPeriod && (
+        viewMode === 'calendar' ? <CalendarView /> : <EditView />
       )}
 
-      {/* Instructions */}
-      {!selectedPeriod && activeTab !== 'periods' && (
-        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-          <div className="flex">
-            <div className="text-yellow-600">⚠️</div>
-            <div className="ml-3">
-              <h4 className="text-sm font-medium text-yellow-800">No Schedule Period Selected</h4>
-              <p className="text-sm text-yellow-700 mt-1">
-                Please select a schedule period from the "Schedule Periods" tab to view schedules and conflicts.
-              </p>
+      {/* Edit Modal */}
+      {editingAssignment && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md mx-4">
+            <h3 className="text-lg font-semibold mb-4">
+              Edit Assignment - {editingAssignment.shift.name}
+            </h3>
+
+            <div className="space-y-4">
+              <div className="bg-gray-50 p-3 rounded">
+                <div className="text-sm text-gray-600">
+                  <strong>Date:</strong> {new Date(editingAssignment.assignedDate).toLocaleDateString()}
+                </div>
+                <div className="text-sm text-gray-600">
+                  <strong>Time:</strong> {formatTime(editingAssignment.shift.startTime)} - {formatTime(editingAssignment.shift.endTime)}
+                </div>
+                <div className="text-sm text-gray-600">
+                  <strong>Role:</strong> {editingAssignment.roleTitle.replace('_', ' ')}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Assigned Resident
+                </label>
+                <select
+                  value={newResidentId}
+                  onChange={(e) => setNewResidentId(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">-- No Assignment --</option>
+                  {residents.map(resident => (
+                    <option key={resident.id} value={resident.id}>
+                      {resident.firstName} {resident.lastName}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Status
+                </label>
+                <select
+                  value={newStatus}
+                  onChange={(e) => setNewStatus(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="scheduled">Scheduled</option>
+                  <option value="completed">Completed</option>
+                  <option value="no_show">No Show</option>
+                  <option value="covered">Covered</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Notes
+                </label>
+                <textarea
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  placeholder="Add notes..."
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  rows={3}
+                />
+              </div>
+
+              <div className="flex space-x-3 pt-4">
+                <button
+                  onClick={handleSaveEdit}
+                  className="flex-1 bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  Save Changes
+                </button>
+                <button
+                  onClick={() => setEditingAssignment(null)}
+                  className="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-400 transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* New Period Form Modal */}
+      {showNewPeriodForm && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md mx-4">
+            <h3 className="text-lg font-semibold mb-4">Create Schedule Period</h3>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Period Name *
+                </label>
+                <input
+                  type="text"
+                  value={newPeriod.name}
+                  onChange={(e) => setNewPeriod({...newPeriod, name: e.target.value})}
+                  placeholder="e.g., Week of June 9, 2025"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Start Date *
+                </label>
+                <input
+                  type="date"
+                  value={newPeriod.startDate}
+                  onChange={(e) => setNewPeriod({...newPeriod, startDate: e.target.value})}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  End Date *
+                </label>
+                <input
+                  type="date"
+                  value={newPeriod.endDate}
+                  onChange={(e) => setNewPeriod({...newPeriod, endDate: e.target.value})}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              <div className="flex space-x-3 pt-4">
+                <button
+                  onClick={handleCreatePeriod}
+                  className="flex-1 bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  Create Period
+                </button>
+                <button
+                  onClick={() => setShowNewPeriodForm(false)}
+                  className="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-400 transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
             </div>
           </div>
         </div>

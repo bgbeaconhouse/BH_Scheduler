@@ -1,8 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { scheduleApi, residentsApi } from '../api/client';
-import './ScheduleManagement.css'; // We'll create this CSS file
 
-// Keep your existing interfaces exactly as they are
 interface SchedulePeriod {
   id: number;
   name: string;
@@ -60,15 +58,12 @@ const ScheduleManagement: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string>('');
-  const [viewMode, setViewMode] = useState<'calendar' | 'edit'>('calendar');
+  const [viewMode, setViewMode] = useState<'calendar' | 'daily' | 'edit'>('calendar');
   const [showNewPeriodForm, setShowNewPeriodForm] = useState(false);
   const [editingAssignment, setEditingAssignment] = useState<ShiftAssignment | null>(null);
   const [newResidentId, setNewResidentId] = useState<string>('');
   const [newStatus, setNewStatus] = useState<string>('scheduled');
   const [notes, setNotes] = useState<string>('');
-  
-  // Calendar-specific state
-  const [selectedWeek, setSelectedWeek] = useState<Date>(new Date());
   
   const [newPeriod, setNewPeriod] = useState({
     name: '',
@@ -85,7 +80,6 @@ const ScheduleManagement: React.FC = () => {
     if (selectedPeriod) {
       fetchAssignments();
       fetchConflicts();
-      setSelectedWeek(new Date(selectedPeriod.startDate));
     }
   }, [selectedPeriod]);
 
@@ -222,73 +216,29 @@ const ScheduleManagement: React.FC = () => {
     }
   };
 
-  // Calendar helper functions
-  const getWeekStart = (date: Date): Date => {
-    const d = new Date(date);
-    const day = d.getDay();
-    const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-    return new Date(d.setDate(diff));
-  };
-
-  const getWeekDates = (startDate: Date): Date[] => {
+  const getWeekDates = (startDate: string, endDate: string) => {
+    const start = new Date(startDate);
+    const end = new Date(endDate);
     const dates = [];
-    for (let i = 0; i < 7; i++) {
-      const date = new Date(startDate);
-      date.setDate(startDate.getDate() + i);
-      dates.push(date);
+    
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+      dates.push(new Date(d));
     }
+    
     return dates;
   };
 
-  const getAssignmentsForDate = (date: Date): ShiftAssignment[] => {
+  const getAssignmentsForDate = (date: Date) => {
     const dateStr = date.toISOString().split('T')[0];
     return assignments.filter(a => a.assignedDate.split('T')[0] === dateStr);
   };
 
-  const groupAssignmentsByTime = (dayAssignments: ShiftAssignment[]) => {
-    const timeSlots: { [key: string]: ShiftAssignment[] } = {};
-    
-    dayAssignments.forEach(assignment => {
-      const startTime = assignment.shift.startTime;
-      if (!timeSlots[startTime]) {
-        timeSlots[startTime] = [];
-      }
-      timeSlots[startTime].push(assignment);
-    });
-
-    const sortedSlots = Object.keys(timeSlots)
-      .sort()
-      .reduce((result: { [key: string]: ShiftAssignment[] }, key) => {
-        result[key] = timeSlots[key].sort((a, b) => 
-          b.shift.department.priority - a.shift.department.priority
-        );
-        return result;
-      }, {});
-
-    return sortedSlots;
+  const getConflictsForDate = (date: Date) => {
+    const dateStr = date.toISOString().split('T')[0];
+    return conflicts.filter(c => c.conflictDate.split('T')[0] === dateStr);
   };
 
-  const getDepartmentClass = (departmentName: string): string => {
-    const classes: { [key: string]: string } = {
-      'kitchen': 'department-kitchen',
-      'shelter_runs': 'department-shelter',
-      'thrift_stores': 'department-thrift',
-      'maintenance': 'department-maintenance'
-    };
-    return classes[departmentName] || 'department-default';
-  };
-
-  const getStatusClass = (status: string): string => {
-    const classes: { [key: string]: string } = {
-      'scheduled': 'status-scheduled',
-      'completed': 'status-completed',
-      'no_show': 'status-no-show',
-      'covered': 'status-covered'
-    };
-    return classes[status] || 'status-default';
-  };
-
-  const formatTime = (time: string): string => {
+  const formatTime = (time: string) => {
     const [hours, minutes] = time.split(':');
     const hour = parseInt(hours);
     const ampm = hour >= 12 ? 'PM' : 'AM';
@@ -296,393 +246,307 @@ const ScheduleManagement: React.FC = () => {
     return `${displayHour}:${minutes} ${ampm}`;
   };
 
-  const navigateWeek = (direction: number) => {
-    if (!selectedPeriod) return;
-    
-    const newDate = new Date(selectedWeek);
-    newDate.setDate(newDate.getDate() + (direction * 7));
-    
-    const periodStart = new Date(selectedPeriod.startDate);
-    const periodEnd = new Date(selectedPeriod.endDate);
-    
-    if (newDate >= periodStart && newDate <= periodEnd) {
-      setSelectedWeek(newDate);
-    }
+  const getDepartmentColor = (departmentName: string) => {
+    const colors: Record<string, string> = {
+      'kitchen': 'bg-orange-100 border-orange-300 text-orange-800',
+      'shelter_runs': 'bg-blue-100 border-blue-300 text-blue-800',
+      'thrift_stores': 'bg-green-100 border-green-300 text-green-800',
+      'maintenance': 'bg-purple-100 border-purple-300 text-purple-800'
+    };
+    return colors[departmentName] || 'bg-gray-100 border-gray-300 text-gray-800';
   };
 
-  // Enhanced Calendar View Component
-  const CalendarView = () => {
-    const weekDates = getWeekDates(getWeekStart(selectedWeek));
+  const getStatusColor = (status: string) => {
+    const colors: Record<string, string> = {
+      'scheduled': 'bg-blue-100 text-blue-800',
+      'completed': 'bg-green-100 text-green-800',
+      'no_show': 'bg-red-100 text-red-800',
+      'covered': 'bg-yellow-100 text-yellow-800'
+    };
+    return colors[status] || 'bg-gray-100 text-gray-800';
+  };
 
-    return (
-      <div className="calendar-container">
-        {/* Calendar Header */}
-        <div className="calendar-header">
-          <div className="calendar-header-content">
-            <div className="calendar-title">
-              <h3>{selectedPeriod?.name}</h3>
-              <p className="calendar-subtitle">
-                Week of {getWeekStart(selectedWeek).toLocaleDateString('en-US', { 
-                  month: 'long', 
-                  day: 'numeric',
-                  year: 'numeric' 
-                })}
+  const getDepartmentIcon = (departmentName: string) => {
+    const icons: Record<string, string> = {
+      'kitchen': '🍳',
+      'shelter_runs': '🚐',
+      'thrift_stores': '🏪',
+      'maintenance': '🔧'
+    };
+    return icons[departmentName] || '📋';
+  };
+
+  const groupAssignmentsByDepartment = (dayAssignments: ShiftAssignment[]) => {
+    const groups: Record<string, ShiftAssignment[]> = {};
+    
+    dayAssignments.forEach(assignment => {
+      const dept = assignment.shift.department.name;
+      if (!groups[dept]) groups[dept] = [];
+      groups[dept].push(assignment);
+    });
+    
+    const sortedDepts = Object.keys(groups).sort((a, b) => {
+      const priorityA = dayAssignments.find(a2 => a2.shift.department.name === a)?.shift.department.priority || 0;
+      const priorityB = dayAssignments.find(a2 => a2.shift.department.name === b)?.shift.department.priority || 0;
+      return priorityB - priorityA;
+    });
+    
+    const sortedGroups: Record<string, ShiftAssignment[]> = {};
+    sortedDepts.forEach(dept => {
+      sortedGroups[dept] = groups[dept].sort((a, b) => a.shift.startTime.localeCompare(b.shift.startTime));
+    });
+    
+    return sortedGroups;
+  };
+
+  // Calendar View
+  const CalendarView = () => (
+    <div className="bg-white rounded-lg shadow overflow-hidden">
+      <div className="grid grid-cols-1 md:grid-cols-7 gap-1 bg-gray-200 p-1">
+        {getWeekDates(selectedPeriod!.startDate, selectedPeriod!.endDate).map(date => {
+          const dayAssignments = getAssignmentsForDate(date);
+          const dayConflicts = getConflictsForDate(date);
+          const departmentGroups = groupAssignmentsByDepartment(dayAssignments);
+          
+          return (
+            <div key={date.toISOString()} className="bg-white rounded min-h-96">
+              <div className="p-3 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-indigo-50">
+                <div className="font-bold text-gray-900 text-lg">
+                  {date.toLocaleDateString('en-US', { weekday: 'short' })}
+                </div>
+                <div className="text-sm text-gray-600">
+                  {date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                </div>
+                <div className="flex justify-between items-center mt-2">
+                  <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">
+                    {dayAssignments.length} staff
+                  </span>
+                  {dayConflicts.length > 0 && (
+                    <span className="text-xs bg-red-100 text-red-800 px-2 py-1 rounded-full">
+                      {dayConflicts.length} conflicts
+                    </span>
+                  )}
+                </div>
+              </div>
+              
+              <div className="p-2 space-y-3">
+                {Object.keys(departmentGroups).length === 0 ? (
+                  <div className="text-xs text-gray-400 italic text-center py-8">
+                    No assignments
+                  </div>
+                ) : (
+                  Object.entries(departmentGroups).map(([deptName, deptAssignments]) => (
+                    <div key={deptName} className="space-y-1">
+                      <div className="flex items-center space-x-1 mb-2">
+                        <span className="text-sm">{getDepartmentIcon(deptName)}</span>
+                        <span className="text-xs font-semibold text-gray-700 uppercase tracking-wide">
+                          {deptName.replace('_', ' ')}
+                        </span>
+                      </div>
+                      
+                      {deptAssignments.map(assignment => (
+                        <div
+                          key={assignment.id}
+                          className={`text-xs p-2 rounded-lg border-l-3 ${getDepartmentColor(deptName)}`}
+                        >
+                          <div className="font-medium">
+                            {assignment.shift.name}
+                          </div>
+                          <div className="text-gray-600 mt-1">
+                            {formatTime(assignment.shift.startTime)} - {formatTime(assignment.shift.endTime)}
+                          </div>
+                          <div className="font-semibold mt-1">
+                            {assignment.resident.firstName} {assignment.resident.lastName}
+                          </div>
+                          <div className="text-gray-500 capitalize">
+                            {assignment.roleTitle.replace('_', ' ')}
+                          </div>
+                          {assignment.status !== 'scheduled' && (
+                            <div className={`text-xs mt-1 font-medium ${
+                              assignment.status === 'completed' ? 'text-green-600' :
+                              assignment.status === 'no_show' ? 'text-red-600' :
+                              'text-yellow-600'
+                            }`}>
+                              {assignment.status.replace('_', ' ').toUpperCase()}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+
+  // Edit View
+  const EditView = () => (
+    <div className="space-y-4">
+      {assignments.map(assignment => (
+        <div key={assignment.id} className="bg-white rounded-lg shadow p-4">
+          <div className="flex justify-between items-center">
+            <div>
+              <h4 className="font-medium text-gray-900">
+                {assignment.shift.department.name.replace('_', ' ')} - {assignment.shift.name}
+              </h4>
+              <p className="text-sm text-gray-600">
+                {formatTime(assignment.shift.startTime)} - {formatTime(assignment.shift.endTime)} • {assignment.roleTitle.replace('_', ' ')}
+              </p>
+              <p className="text-sm font-medium text-gray-900">
+                {assignment.resident.firstName} {assignment.resident.lastName}
+              </p>
+              <p className="text-xs text-gray-500">
+                {new Date(assignment.assignedDate).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
               </p>
             </div>
-            
-            <div className="calendar-controls">
-              {/* Week Navigation */}
-              <div className="week-navigation">
-                <button
-                  onClick={() => navigateWeek(-1)}
-                  className="nav-button"
-                  title="Previous Week"
-                >
-                  ‹
-                </button>
-                
-                <button
-                  onClick={() => setSelectedWeek(new Date())}
-                  className="today-button"
-                >
-                  Today
-                </button>
-                
-                <button
-                  onClick={() => navigateWeek(1)}
-                  className="nav-button"
-                  title="Next Week"
-                >
-                  ›
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* Quick Stats */}
-          <div className="quick-stats">
-            <div className="stat-item">
-              <div className="stat-number">{assignments.length}</div>
-              <div className="stat-label">Total Assignments</div>
-            </div>
-            <div className="stat-item">
-              <div className="stat-number">
-                {assignments.filter(a => a.status === 'completed').length}
-              </div>
-              <div className="stat-label">Completed</div>
-            </div>
-            <div className="stat-item">
-              <div className="stat-number">
-                {assignments.filter(a => a.status === 'scheduled').length}
-              </div>
-              <div className="stat-label">Scheduled</div>
-            </div>
-            <div className="stat-item">
-              <div className="stat-number">
-                {new Set(assignments.map(a => a.residentId)).size}
-              </div>
-              <div className="stat-label">Residents</div>
-            </div>
-          </div>
-        </div>
-
-        {/* Calendar Grid */}
-        <div className="calendar-grid">
-          {weekDates.map((date) => {
-            const dayAssignments = getAssignmentsForDate(date);
-            const timeSlots = groupAssignmentsByTime(dayAssignments);
-            const isToday = date.toDateString() === new Date().toDateString();
-            const isWeekend = date.getDay() === 0 || date.getDay() === 6;
-
-            return (
-              <div 
-                key={date.toISOString()} 
-                className={`calendar-day ${isWeekend ? 'weekend' : ''}`}
-              >
-                {/* Day Header */}
-                <div className={`day-header ${isToday ? 'today' : ''}`}>
-                  <div className="day-name">
-                    {date.toLocaleDateString('en-US', { weekday: 'short' })}
-                  </div>
-                  <div className="day-date">
-                    {date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                  </div>
-                  {dayAssignments.length > 0 && (
-                    <div className="day-count">
-                      <span className="count-badge">
-                        {dayAssignments.length} shifts
-                      </span>
-                    </div>
-                  )}
-                </div>
-
-                {/* Day Content */}
-                <div className="day-content">
-                  {Object.keys(timeSlots).length === 0 ? (
-                    <div className="no-shifts">
-                      <div className="no-shifts-icon">📅</div>
-                      <div>No shifts</div>
-                    </div>
-                  ) : (
-                    Object.entries(timeSlots).map(([timeSlot, slotAssignments]) => (
-                      <div key={timeSlot} className="time-slot">
-                        <div className="time-slot-header">
-                          {formatTime(timeSlot)}
-                        </div>
-                        {slotAssignments.map(assignment => (
-                          <div
-                            key={assignment.id}
-                            className={`assignment-card ${getDepartmentClass(assignment.shift.department.name)}`}
-                            onClick={() => handleEditAssignment(assignment)}
-                          >
-                            <div className="assignment-title">{assignment.shift.name}</div>
-                            <div className="assignment-time">
-                              {formatTime(assignment.shift.startTime)} - {formatTime(assignment.shift.endTime)}
-                            </div>
-                            <div className="assignment-resident">
-                              {assignment.resident.firstName} {assignment.resident.lastName}
-                            </div>
-                            <div className="assignment-role">
-                              {assignment.roleTitle.replace('_', ' ')}
-                            </div>
-                            {assignment.status !== 'scheduled' && (
-                              <div className={`status-badge ${getStatusClass(assignment.status)}`}>
-                                {assignment.status.replace('_', ' ').toUpperCase()}
-                              </div>
-                            )}
-                            {assignment.notes && (
-                              <div className="assignment-notes">
-                                📝 {assignment.notes}
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Department Legend */}
-        <div className="calendar-legend">
-          <div className="legend-content">
-            <div className="legend-title">Departments:</div>
-            <div className="legend-items">
-              <div className="legend-item">
-                <div className="legend-color department-kitchen"></div>
-                <span>Kitchen</span>
-              </div>
-              <div className="legend-item">
-                <div className="legend-color department-shelter"></div>
-                <span>Shelter Runs</span>
-              </div>
-              <div className="legend-item">
-                <div className="legend-color department-thrift"></div>
-                <span>Thrift Stores</span>
-              </div>
-              <div className="legend-item">
-                <div className="legend-color department-maintenance"></div>
-                <span>Maintenance</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  // Edit View (your existing list view)
-  const EditView = () => (
-    <div className="edit-view">
-      {assignments.length === 0 ? (
-        <div className="no-assignments">
-          <div className="no-assignments-icon">📋</div>
-          <h3>No assignments yet</h3>
-          <p>Generate a schedule to see assignments here.</p>
-          <button
-            onClick={handleGenerateSchedule}
-            disabled={generating}
-            className="generate-button"
-          >
-            Generate First Schedule
-          </button>
-        </div>
-      ) : (
-        assignments.map(assignment => (
-          <div key={assignment.id} className="assignment-item">
-            <div className="assignment-content">
-              <div className="assignment-header">
-                <h4>
-                  {assignment.shift.department.name.replace('_', ' ')} - {assignment.shift.name}
-                </h4>
-                <span className={`status-badge ${getStatusClass(assignment.status)}`}>
-                  {assignment.status.replace('_', ' ')}
-                </span>
-              </div>
-              <div className="assignment-details">
-                <div className="detail-item">
-                  <span className="detail-label">Date:</span><br />
-                  {new Date(assignment.assignedDate).toLocaleDateString('en-US', { 
-                    weekday: 'short', 
-                    month: 'short', 
-                    day: 'numeric' 
-                  })}
-                </div>
-                <div className="detail-item">
-                  <span className="detail-label">Time:</span><br />
-                  {formatTime(assignment.shift.startTime)} - {formatTime(assignment.shift.endTime)}
-                </div>
-                <div className="detail-item">
-                  <span className="detail-label">Resident:</span><br />
-                  {assignment.resident.firstName} {assignment.resident.lastName}
-                </div>
-                <div className="detail-item">
-                  <span className="detail-label">Role:</span><br />
-                  {assignment.roleTitle.replace('_', ' ')}
-                </div>
-              </div>
-              {assignment.notes && (
-                <div className="assignment-notes-edit">
-                  <span className="detail-label">Notes:</span> {assignment.notes}
-                </div>
-              )}
-            </div>
-            <div className="assignment-actions">
+            <div className="flex items-center space-x-2">
+              <span className={`px-2 py-1 text-xs rounded-full font-medium ${getStatusColor(assignment.status)}`}>
+                {assignment.status.replace('_', ' ')}
+              </span>
               <button
                 onClick={() => handleEditAssignment(assignment)}
-                className="edit-button"
+                className="text-blue-600 hover:text-blue-900 text-sm"
               >
                 Edit
               </button>
               <button
                 onClick={() => handleDeleteAssignment(assignment.id)}
-                className="delete-button"
+                className="text-red-600 hover:text-red-900 text-sm"
               >
                 Delete
               </button>
             </div>
           </div>
-        ))
-      )}
+        </div>
+      ))}
     </div>
   );
 
   if (loading) {
     return (
-      <div className="loading-container">
-        <div>Loading schedules...</div>
+      <div className="flex justify-center items-center h-64">
+        <div className="text-lg">Loading schedules...</div>
       </div>
     );
   }
 
   return (
-    <div className="schedule-management">
-      <div className="page-header">
-        <div className="page-title">
-          <h2>Work Schedule</h2>
-          <p>Manage and view work assignments</p>
-        </div>
+    <div className="space-y-6">
+      <div className="flex justify-between items-center">
+        <h2 className="text-2xl font-bold text-gray-900">Work Schedule</h2>
         <button
           onClick={() => setShowNewPeriodForm(true)}
-          className="create-period-button"
+          className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors"
         >
           Create New Period
         </button>
       </div>
 
       {error && (
-        <div className="error-message">
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
           {error}
         </div>
       )}
 
-      {/* Period Selection */}
-      <div className="period-selection">
-        <h3>Select Schedule Period</h3>
-        <div className="periods-grid">
+      <div className="bg-white rounded-lg shadow p-6">
+        <h3 className="text-lg font-semibold mb-4">Select Schedule Period</h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {periods.map(period => (
             <div
               key={period.id}
               onClick={() => setSelectedPeriod(period)}
-              className={`period-card ${selectedPeriod?.id === period.id ? 'selected' : ''}`}
+              className={`p-4 rounded-lg border-2 cursor-pointer transition-colors ${
+                selectedPeriod?.id === period.id
+                  ? 'border-blue-500 bg-blue-50'
+                  : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+              }`}
             >
-              <div className="period-name">{period.name}</div>
-              <div className="period-dates">
+              <div className="font-medium">{period.name}</div>
+              <div className="text-sm text-gray-500 mt-1">
                 {new Date(period.startDate).toLocaleDateString()} - {new Date(period.endDate).toLocaleDateString()}
               </div>
-              {selectedPeriod?.id === period.id && (
-                <div className="period-selected">✓ Selected</div>
-              )}
             </div>
           ))}
         </div>
       </div>
 
       {selectedPeriod && (
-        <>
-          {/* Control Bar */}
-          <div className="control-bar">
-            <div className="control-info">
-              <h3>{selectedPeriod.name}</h3>
-              <p>
-                {assignments.length} assignments • {conflicts.filter(c => c.severity === 'error').length} unresolved conflicts
+        <div className="bg-white rounded-lg shadow p-6">
+          <div className="flex justify-between items-center">
+            <div>
+              <h3 className="text-lg font-semibold">{selectedPeriod.name}</h3>
+              <p className="text-sm text-gray-600">
+                {assignments.length} assignments • {conflicts.filter(c => c.severity === 'error').length} conflicts
               </p>
             </div>
-            <div className="control-actions">
-              <div className="view-toggle">
+            <div className="flex space-x-4">
+              <div className="flex bg-gray-100 rounded-lg p-1">
                 <button
                   onClick={() => setViewMode('calendar')}
-                  className={`toggle-button ${viewMode === 'calendar' ? 'active' : ''}`}
+                  className={`px-3 py-1 text-sm rounded ${
+                    viewMode === 'calendar' ? 'bg-white shadow text-blue-600' : 'text-gray-600'
+                  }`}
                 >
-                  📅 Calendar View
+                  📅 Calendar
                 </button>
                 <button
                   onClick={() => setViewMode('edit')}
-                  className={`toggle-button ${viewMode === 'edit' ? 'active' : ''}`}
+                  className={`px-3 py-1 text-sm rounded ${
+                    viewMode === 'edit' ? 'bg-white shadow text-blue-600' : 'text-gray-600'
+                  }`}
                 >
-                  ✏️ Edit Mode
+                  ✏️ Edit
                 </button>
               </div>
               <button
                 onClick={handleGenerateSchedule}
                 disabled={generating}
-                className="generate-schedule-button"
+                className="bg-purple-600 text-white px-6 py-2 rounded-lg hover:bg-purple-700 transition-colors disabled:bg-gray-400"
               >
-                {generating ? (
-                  <span>🔄 Generating...</span>
-                ) : (
-                  '🔄 Generate Schedule'
-                )}
+                {generating ? 'Generating...' : 'Generate Schedule'}
               </button>
             </div>
           </div>
-
-          {/* Main Content */}
-          {viewMode === 'calendar' ? <CalendarView /> : <EditView />}
-        </>
+        </div>
       )}
 
-      {/* Edit Assignment Modal */}
-      {editingAssignment && (
-        <div className="modal-overlay">
-          <div className="modal-content">
-            <h3>Edit Assignment - {editingAssignment.shift.name}</h3>
+      {selectedPeriod && (
+        viewMode === 'calendar' ? <CalendarView /> : <EditView />
+      )}
 
-            <div className="modal-form">
-              <div className="assignment-info">
-                <div><strong>Date:</strong> {new Date(editingAssignment.assignedDate).toLocaleDateString()}</div>
-                <div><strong>Time:</strong> {editingAssignment.shift.startTime} - {editingAssignment.shift.endTime}</div>
-                <div><strong>Role:</strong> {editingAssignment.roleTitle.replace('_', ' ')}</div>
+      {/* Edit Modal */}
+      {editingAssignment && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md mx-4">
+            <h3 className="text-lg font-semibold mb-4">
+              Edit Assignment - {editingAssignment.shift.name}
+            </h3>
+
+            <div className="space-y-4">
+              <div className="bg-gray-50 p-3 rounded">
+                <div className="text-sm text-gray-600">
+                  <strong>Date:</strong> {new Date(editingAssignment.assignedDate).toLocaleDateString()}
+                </div>
+                <div className="text-sm text-gray-600">
+                  <strong>Time:</strong> {formatTime(editingAssignment.shift.startTime)} - {formatTime(editingAssignment.shift.endTime)}
+                </div>
+                <div className="text-sm text-gray-600">
+                  <strong>Role:</strong> {editingAssignment.roleTitle.replace('_', ' ')}
+                </div>
               </div>
 
-              <div className="form-field">
-                <label>Assigned Resident</label>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Assigned Resident
+                </label>
                 <select
                   value={newResidentId}
                   onChange={(e) => setNewResidentId(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
                   <option value="">-- No Assignment --</option>
                   {residents.map(resident => (
@@ -693,11 +557,14 @@ const ScheduleManagement: React.FC = () => {
                 </select>
               </div>
 
-              <div className="form-field">
-                <label>Status</label>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Status
+                </label>
                 <select
                   value={newStatus}
                   onChange={(e) => setNewStatus(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
                   <option value="scheduled">Scheduled</option>
                   <option value="completed">Completed</option>
@@ -706,21 +573,30 @@ const ScheduleManagement: React.FC = () => {
                 </select>
               </div>
 
-              <div className="form-field">
-                <label>Notes</label>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Notes
+                </label>
                 <textarea
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
                   placeholder="Add notes..."
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   rows={3}
                 />
               </div>
 
-              <div className="modal-actions">
-                <button onClick={handleSaveEdit} className="save-button">
+              <div className="flex space-x-3 pt-4">
+                <button
+                  onClick={handleSaveEdit}
+                  className="flex-1 bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 transition-colors"
+                >
                   Save Changes
                 </button>
-                <button onClick={() => setEditingAssignment(null)} className="cancel-button">
+                <button
+                  onClick={() => setEditingAssignment(null)}
+                  className="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-400 transition-colors"
+                >
                   Cancel
                 </button>
               </div>
@@ -731,73 +607,63 @@ const ScheduleManagement: React.FC = () => {
 
       {/* New Period Form Modal */}
       {showNewPeriodForm && (
-        <div className="modal-overlay">
-          <div className="modal-content">
-            <h3>Create Schedule Period</h3>
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md mx-4">
+            <h3 className="text-lg font-semibold mb-4">Create Schedule Period</h3>
             
-            <div className="modal-form">
-              <div className="form-field">
-                <label>Period Name *</label>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Period Name *
+                </label>
                 <input
                   type="text"
                   value={newPeriod.name}
                   onChange={(e) => setNewPeriod({...newPeriod, name: e.target.value})}
                   placeholder="e.g., Week of June 9, 2025"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
 
-              <div className="form-field">
-                <label>Start Date *</label>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Start Date *
+                </label>
                 <input
                   type="date"
                   value={newPeriod.startDate}
                   onChange={(e) => setNewPeriod({...newPeriod, startDate: e.target.value})}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
 
-              <div className="form-field">
-                <label>End Date *</label>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  End Date *
+                </label>
                 <input
                   type="date"
                   value={newPeriod.endDate}
                   onChange={(e) => setNewPeriod({...newPeriod, endDate: e.target.value})}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
 
-              <div className="modal-actions">
-                <button onClick={handleCreatePeriod} className="save-button">
+              <div className="flex space-x-3 pt-4">
+                <button
+                  onClick={handleCreatePeriod}
+                  className="flex-1 bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 transition-colors"
+                >
                   Create Period
                 </button>
-                <button onClick={() => setShowNewPeriodForm(false)} className="cancel-button">
+                <button
+                  onClick={() => setShowNewPeriodForm(false)}
+                  className="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-400 transition-colors"
+                >
                   Cancel
                 </button>
               </div>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* Conflicts Display */}
-      {conflicts.length > 0 && (
-        <div className="conflicts-section">
-          <h3 className="conflicts-title">
-            ⚠️ Schedule Conflicts ({conflicts.length})
-          </h3>
-          <div className="conflicts-list">
-            {conflicts.slice(0, 5).map(conflict => (
-              <div key={conflict.id} className={`conflict-item ${conflict.severity}`}>
-                <div className="conflict-type">{conflict.conflictType.replace('_', ' ')}</div>
-                <div className="conflict-description">{conflict.description}</div>
-                <div className="conflict-date">
-                  {new Date(conflict.conflictDate).toLocaleDateString()}
-                </div>
-              </div>
-            ))}
-            {conflicts.length > 5 && (
-              <div className="conflicts-more">
-                ... and {conflicts.length - 5} more conflicts
-              </div>
-            )}
           </div>
         </div>
       )}

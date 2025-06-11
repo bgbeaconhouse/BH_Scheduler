@@ -169,9 +169,6 @@ export const appointmentTypesApi = {
 };
 
 // Appointments API calls
-// Add these new functions to your appointmentsApi object in client.ts
-// Replace your existing appointmentsApi with this updated version:
-
 export const appointmentsApi = {
   getAll: (params?: {
     residentId?: number;
@@ -223,11 +220,40 @@ export const appointmentsApi = {
     updateFutureOnly?: boolean;
   }) => api.put('/appointments/recurring-series', data),
   
-  // NEW: Delete entire recurring series
-  deleteRecurringSeries: (recurringPattern: string, residentId: number) =>
-    api.delete('/appointments/recurring-series', {
-      data: { recurringPattern, residentId }
-    })
+  // NEW: Delete entire recurring series - DEBUG VERSION
+  deleteRecurringSeries: async (recurringPattern: string, residentId: number) => {
+    console.log('=== API CLIENT DELETE SERIES ===');
+    console.log('Pattern:', recurringPattern);
+    console.log('Resident ID:', residentId);
+    console.log('API Base URL:', API_BASE_URL);
+    
+    const requestData = { recurringPattern, residentId };
+    console.log('Request data:', requestData);
+    
+    try {
+      // Use axios for the request
+      const response = await api.delete('/appointments/recurring-series', {
+        data: requestData
+      });
+      
+      console.log('Axios response:', response);
+      return response;
+      
+    } catch (axiosError: any) {
+      console.error('Axios error:', axiosError);
+      console.error('Axios error response:', axiosError.response);
+      console.error('Axios error request:', axiosError.request);
+      console.error('Axios error config:', axiosError.config);
+      
+      if (axiosError.response) {
+        console.error('Response data:', axiosError.response.data);
+        console.error('Response status:', axiosError.response.status);
+        console.error('Response headers:', axiosError.response.headers);
+      }
+      
+      throw axiosError;
+    }
+  }
 };
 
 // Schedule API calls

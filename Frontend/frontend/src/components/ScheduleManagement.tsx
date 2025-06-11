@@ -247,23 +247,23 @@ const ScheduleManagement: React.FC = () => {
   };
 
   const getDepartmentColor = (departmentName: string) => {
-    const colors: Record<string, string> = {
-      'kitchen': 'bg-orange-100 border-orange-300 text-orange-800',
-      'shelter_runs': 'bg-blue-100 border-blue-300 text-blue-800',
-      'thrift_stores': 'bg-green-100 border-green-300 text-green-800',
-      'maintenance': 'bg-purple-100 border-purple-300 text-purple-800'
+    const colors: Record<string, { bg: string, border: string, text: string }> = {
+      'kitchen': { bg: '#fff7ed', border: '#fb923c', text: '#7c2d12' },
+      'shelter_runs': { bg: '#eff6ff', border: '#60a5fa', text: '#1e3a8a' },
+      'thrift_stores': { bg: '#f0fdf4', border: '#4ade80', text: '#14532d' },
+      'maintenance': { bg: '#faf5ff', border: '#a78bfa', text: '#581c87' }
     };
-    return colors[departmentName] || 'bg-gray-100 border-gray-300 text-gray-800';
+    return colors[departmentName] || { bg: '#f9fafb', border: '#9ca3af', text: '#1f2937' };
   };
 
   const getStatusColor = (status: string) => {
-    const colors: Record<string, string> = {
-      'scheduled': 'bg-blue-100 text-blue-800',
-      'completed': 'bg-green-100 text-green-800',
-      'no_show': 'bg-red-100 text-red-800',
-      'covered': 'bg-yellow-100 text-yellow-800'
+    const colors: Record<string, { bg: string, text: string }> = {
+      'scheduled': { bg: '#dbeafe', text: '#1e40af' },
+      'completed': { bg: '#dcfce7', text: '#166534' },
+      'no_show': { bg: '#fee2e2', text: '#dc2626' },
+      'covered': { bg: '#fef3c7', text: '#d97706' }
     };
-    return colors[status] || 'bg-gray-100 text-gray-800';
+    return colors[status] || { bg: '#f3f4f6', text: '#1f2937' };
   };
 
   const getDepartmentIcon = (departmentName: string) => {
@@ -299,79 +299,180 @@ const ScheduleManagement: React.FC = () => {
     return sortedGroups;
   };
 
-  // Calendar View
+  // FIXED Calendar View with inline styles
   const CalendarView = () => (
-    <div className="bg-white rounded-lg shadow overflow-hidden">
-      <div className="grid grid-cols-1 md:grid-cols-7 gap-1 bg-gray-200 p-1">
+    <div style={{
+      backgroundColor: 'white',
+      borderRadius: '8px',
+      boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)',
+      overflow: 'hidden'
+    }}>
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(7, 1fr)',
+        gap: '1px',
+        backgroundColor: '#e5e7eb',
+        padding: '4px'
+      }}>
         {getWeekDates(selectedPeriod!.startDate, selectedPeriod!.endDate).map(date => {
           const dayAssignments = getAssignmentsForDate(date);
           const dayConflicts = getConflictsForDate(date);
           const departmentGroups = groupAssignmentsByDepartment(dayAssignments);
           
           return (
-            <div key={date.toISOString()} className="bg-white rounded min-h-96">
-              <div className="p-3 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-indigo-50">
-                <div className="font-bold text-gray-900 text-lg">
+            <div key={date.toISOString()} style={{
+              backgroundColor: 'white',
+              borderRadius: '4px',
+              minHeight: '384px'
+            }}>
+              {/* Day Header */}
+              <div style={{
+                padding: '12px',
+                borderBottom: '1px solid #e5e7eb',
+                background: 'linear-gradient(to right, #eff6ff, #e0e7ff)'
+              }}>
+                <div style={{
+                  fontWeight: 'bold',
+                  color: '#1f2937',
+                  fontSize: '18px'
+                }}>
                   {date.toLocaleDateString('en-US', { weekday: 'short' })}
                 </div>
-                <div className="text-sm text-gray-600">
+                <div style={{
+                  fontSize: '14px',
+                  color: '#6b7280'
+                }}>
                   {date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                 </div>
-                <div className="flex justify-between items-center mt-2">
-                  <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">
+                <div style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  marginTop: '8px'
+                }}>
+                  <span style={{
+                    fontSize: '12px',
+                    backgroundColor: '#dbeafe',
+                    color: '#1e40af',
+                    padding: '2px 8px',
+                    borderRadius: '12px'
+                  }}>
                     {dayAssignments.length} staff
                   </span>
                   {dayConflicts.length > 0 && (
-                    <span className="text-xs bg-red-100 text-red-800 px-2 py-1 rounded-full">
+                    <span style={{
+                      fontSize: '12px',
+                      backgroundColor: '#fee2e2',
+                      color: '#dc2626',
+                      padding: '2px 8px',
+                      borderRadius: '12px'
+                    }}>
                       {dayConflicts.length} conflicts
                     </span>
                   )}
                 </div>
               </div>
               
-              <div className="p-2 space-y-3">
+              {/* Day Content */}
+              <div style={{
+                padding: '8px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '12px'
+              }}>
                 {Object.keys(departmentGroups).length === 0 ? (
-                  <div className="text-xs text-gray-400 italic text-center py-8">
+                  <div style={{
+                    fontSize: '12px',
+                    color: '#9ca3af',
+                    fontStyle: 'italic',
+                    textAlign: 'center',
+                    paddingTop: '32px',
+                    paddingBottom: '32px'
+                  }}>
                     No assignments
                   </div>
                 ) : (
                   Object.entries(departmentGroups).map(([deptName, deptAssignments]) => (
-                    <div key={deptName} className="space-y-1">
-                      <div className="flex items-center space-x-1 mb-2">
-                        <span className="text-sm">{getDepartmentIcon(deptName)}</span>
-                        <span className="text-xs font-semibold text-gray-700 uppercase tracking-wide">
+                    <div key={deptName} style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                      <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        marginBottom: '8px'
+                      }}>
+                        <span style={{ fontSize: '14px' }}>{getDepartmentIcon(deptName)}</span>
+                        <span style={{
+                          fontSize: '12px',
+                          fontWeight: '600',
+                          color: '#374151',
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.05em'
+                        }}>
                           {deptName.replace('_', ' ')}
                         </span>
                       </div>
                       
-                      {deptAssignments.map(assignment => (
-                        <div
-                          key={assignment.id}
-                          className={`text-xs p-2 rounded-lg border-l-3 ${getDepartmentColor(deptName)}`}
-                        >
-                          <div className="font-medium">
-                            {assignment.shift.name}
-                          </div>
-                          <div className="text-gray-600 mt-1">
-                            {formatTime(assignment.shift.startTime)} - {formatTime(assignment.shift.endTime)}
-                          </div>
-                          <div className="font-semibold mt-1">
-                            {assignment.resident.firstName} {assignment.resident.lastName}
-                          </div>
-                          <div className="text-gray-500 capitalize">
-                            {assignment.roleTitle.replace('_', ' ')}
-                          </div>
-                          {assignment.status !== 'scheduled' && (
-                            <div className={`text-xs mt-1 font-medium ${
-                              assignment.status === 'completed' ? 'text-green-600' :
-                              assignment.status === 'no_show' ? 'text-red-600' :
-                              'text-yellow-600'
-                            }`}>
-                              {assignment.status.replace('_', ' ').toUpperCase()}
+                      {deptAssignments.map(assignment => {
+                        const deptColors = getDepartmentColor(deptName);
+                        return (
+                          <div
+                            key={assignment.id}
+                            style={{
+                              fontSize: '12px',
+                              padding: '8px',
+                              borderRadius: '6px',
+                              borderLeft: `4px solid ${deptColors.border}`,
+                              backgroundColor: deptColors.bg,
+                              color: deptColors.text,
+                              cursor: 'pointer',
+                              transition: 'box-shadow 0.2s'
+                            }}
+                            onClick={() => handleEditAssignment(assignment)}
+                            onMouseOver={(e) => {
+                              e.currentTarget.style.boxShadow = '0 2px 4px rgba(0, 0, 0, 0.1)';
+                            }}
+                            onMouseOut={(e) => {
+                              e.currentTarget.style.boxShadow = 'none';
+                            }}
+                          >
+                            <div style={{
+                              fontWeight: '500',
+                              marginBottom: '2px'
+                            }}>
+                              {assignment.shift.name}
                             </div>
-                          )}
-                        </div>
-                      ))}
+                            <div style={{
+                              opacity: 0.8,
+                              marginBottom: '4px'
+                            }}>
+                              {formatTime(assignment.shift.startTime)} - {formatTime(assignment.shift.endTime)}
+                            </div>
+                            <div style={{
+                              fontWeight: '600',
+                              marginBottom: '2px'
+                            }}>
+                              {assignment.resident.firstName} {assignment.resident.lastName}
+                            </div>
+                            <div style={{
+                              opacity: 0.7,
+                              textTransform: 'capitalize'
+                            }}>
+                              {assignment.roleTitle.replace('_', ' ')}
+                            </div>
+                            {assignment.status !== 'scheduled' && (
+                              <div style={{
+                                fontSize: '11px',
+                                marginTop: '4px',
+                                fontWeight: '500',
+                                color: assignment.status === 'completed' ? '#16a34a' :
+                                       assignment.status === 'no_show' ? '#dc2626' : '#d97706'
+                              }}>
+                                {assignment.status.replace('_', ' ').toUpperCase()}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   ))
                 )}
@@ -383,39 +484,95 @@ const ScheduleManagement: React.FC = () => {
     </div>
   );
 
-  // Edit View
+  // Edit View with fixed styles
   const EditView = () => (
-    <div className="space-y-4">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
       {assignments.map(assignment => (
-        <div key={assignment.id} className="bg-white rounded-lg shadow p-4">
-          <div className="flex justify-between items-center">
+        <div key={assignment.id} style={{
+          backgroundColor: 'white',
+          borderRadius: '8px',
+          boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)',
+          padding: '16px'
+        }}>
+          <div style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center'
+          }}>
             <div>
-              <h4 className="font-medium text-gray-900">
+              <h4 style={{
+                fontWeight: '500',
+                color: '#1f2937',
+                margin: 0
+              }}>
                 {assignment.shift.department.name.replace('_', ' ')} - {assignment.shift.name}
               </h4>
-              <p className="text-sm text-gray-600">
+              <p style={{
+                fontSize: '14px',
+                color: '#6b7280',
+                margin: '4px 0'
+              }}>
                 {formatTime(assignment.shift.startTime)} - {formatTime(assignment.shift.endTime)} • {assignment.roleTitle.replace('_', ' ')}
               </p>
-              <p className="text-sm font-medium text-gray-900">
+              <p style={{
+                fontSize: '14px',
+                fontWeight: '500',
+                color: '#1f2937',
+                margin: '4px 0'
+              }}>
                 {assignment.resident.firstName} {assignment.resident.lastName}
               </p>
-              <p className="text-xs text-gray-500">
+              <p style={{
+                fontSize: '12px',
+                color: '#6b7280',
+                margin: 0
+              }}>
                 {new Date(assignment.assignedDate).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
               </p>
             </div>
-            <div className="flex items-center space-x-2">
-              <span className={`px-2 py-1 text-xs rounded-full font-medium ${getStatusColor(assignment.status)}`}>
-                {assignment.status.replace('_', ' ')}
-              </span>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px'
+            }}>
+              {(() => {
+                const statusColors = getStatusColor(assignment.status);
+                return (
+                  <span style={{
+                    padding: '4px 8px',
+                    fontSize: '12px',
+                    borderRadius: '12px',
+                    fontWeight: '500',
+                    backgroundColor: statusColors.bg,
+                    color: statusColors.text
+                  }}>
+                    {assignment.status.replace('_', ' ')}
+                  </span>
+                );
+              })()}
               <button
                 onClick={() => handleEditAssignment(assignment)}
-                className="text-blue-600 hover:text-blue-900 text-sm"
+                style={{
+                  color: '#2563eb',
+                  fontSize: '14px',
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  textDecoration: 'underline'
+                }}
               >
                 Edit
               </button>
               <button
                 onClick={() => handleDeleteAssignment(assignment.id)}
-                className="text-red-600 hover:text-red-900 text-sm"
+                style={{
+                  color: '#dc2626',
+                  fontSize: '14px',
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  textDecoration: 'underline'
+                }}
               >
                 Delete
               </button>
@@ -428,45 +585,95 @@ const ScheduleManagement: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="flex justify-center items-center h-64">
-        <div className="text-lg">Loading schedules...</div>
+      <div style={{
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'center',
+        height: '256px'
+      }}>
+        <div style={{ fontSize: '18px' }}>Loading schedules...</div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-bold text-gray-900">Work Schedule</h2>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+      <div style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center'
+      }}>
+        <h2 style={{
+          fontSize: '24px',
+          fontWeight: 'bold',
+          color: '#1f2937',
+          margin: 0
+        }}>Work Schedule</h2>
         <button
           onClick={() => setShowNewPeriodForm(true)}
-          className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors"
+          style={{
+            backgroundColor: '#16a34a',
+            color: 'white',
+            padding: '8px 16px',
+            border: 'none',
+            borderRadius: '8px',
+            cursor: 'pointer',
+            fontSize: '14px',
+            transition: 'background-color 0.2s'
+          }}
         >
           Create New Period
         </button>
       </div>
 
       {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
+        <div style={{
+          backgroundColor: '#fef2f2',
+          border: '1px solid #fecaca',
+          color: '#dc2626',
+          padding: '12px 16px',
+          borderRadius: '8px'
+        }}>
           {error}
         </div>
       )}
 
-      <div className="bg-white rounded-lg shadow p-6">
-        <h3 className="text-lg font-semibold mb-4">Select Schedule Period</h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div style={{
+        backgroundColor: 'white',
+        borderRadius: '8px',
+        boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)',
+        padding: '24px'
+      }}>
+        <h3 style={{
+          fontSize: '18px',
+          fontWeight: '600',
+          marginBottom: '16px',
+          color: '#1f2937'
+        }}>Select Schedule Period</h3>
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
+          gap: '16px'
+        }}>
           {periods.map(period => (
             <div
               key={period.id}
               onClick={() => setSelectedPeriod(period)}
-              className={`p-4 rounded-lg border-2 cursor-pointer transition-colors ${
-                selectedPeriod?.id === period.id
-                  ? 'border-blue-500 bg-blue-50'
-                  : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
-              }`}
+              style={{
+                padding: '16px',
+                border: `2px solid ${selectedPeriod?.id === period.id ? '#3b82f6' : '#e5e7eb'}`,
+                borderRadius: '8px',
+                cursor: 'pointer',
+                transition: 'all 0.2s',
+                backgroundColor: selectedPeriod?.id === period.id ? '#eff6ff' : 'white'
+              }}
             >
-              <div className="font-medium">{period.name}</div>
-              <div className="text-sm text-gray-500 mt-1">
+              <div style={{ fontWeight: '500' }}>{period.name}</div>
+              <div style={{
+                fontSize: '14px',
+                color: '#6b7280',
+                marginTop: '4px'
+              }}>
                 {new Date(period.startDate).toLocaleDateString()} - {new Date(period.endDate).toLocaleDateString()}
               </div>
             </div>
@@ -475,29 +682,65 @@ const ScheduleManagement: React.FC = () => {
       </div>
 
       {selectedPeriod && (
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="flex justify-between items-center">
+        <div style={{
+          backgroundColor: 'white',
+          borderRadius: '8px',
+          boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)',
+          padding: '24px'
+        }}>
+          <div style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center'
+          }}>
             <div>
-              <h3 className="text-lg font-semibold">{selectedPeriod.name}</h3>
-              <p className="text-sm text-gray-600">
+              <h3 style={{
+                fontSize: '18px',
+                fontWeight: '600',
+                margin: 0
+              }}>{selectedPeriod.name}</h3>
+              <p style={{
+                fontSize: '14px',
+                color: '#6b7280',
+                margin: '4px 0 0 0'
+              }}>
                 {assignments.length} assignments • {conflicts.filter(c => c.severity === 'error').length} conflicts
               </p>
             </div>
-            <div className="flex space-x-4">
-              <div className="flex bg-gray-100 rounded-lg p-1">
+            <div style={{ display: 'flex', gap: '16px' }}>
+              <div style={{
+                display: 'flex',
+                backgroundColor: '#f3f4f6',
+                borderRadius: '8px',
+                padding: '4px'
+              }}>
                 <button
                   onClick={() => setViewMode('calendar')}
-                  className={`px-3 py-1 text-sm rounded ${
-                    viewMode === 'calendar' ? 'bg-white shadow text-blue-600' : 'text-gray-600'
-                  }`}
+                  style={{
+                    padding: '8px 12px',
+                    fontSize: '14px',
+                    border: 'none',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    backgroundColor: viewMode === 'calendar' ? 'white' : 'transparent',
+                    color: viewMode === 'calendar' ? '#2563eb' : '#6b7280',
+                    boxShadow: viewMode === 'calendar' ? '0 1px 2px rgba(0, 0, 0, 0.1)' : 'none'
+                  }}
                 >
                   📅 Calendar
                 </button>
                 <button
                   onClick={() => setViewMode('edit')}
-                  className={`px-3 py-1 text-sm rounded ${
-                    viewMode === 'edit' ? 'bg-white shadow text-blue-600' : 'text-gray-600'
-                  }`}
+                  style={{
+                    padding: '8px 12px',
+                    fontSize: '14px',
+                    border: 'none',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    backgroundColor: viewMode === 'edit' ? 'white' : 'transparent',
+                    color: viewMode === 'edit' ? '#2563eb' : '#6b7280',
+                    boxShadow: viewMode === 'edit' ? '0 1px 2px rgba(0, 0, 0, 0.1)' : 'none'
+                  }}
                 >
                   ✏️ Edit
                 </button>
@@ -505,7 +748,16 @@ const ScheduleManagement: React.FC = () => {
               <button
                 onClick={handleGenerateSchedule}
                 disabled={generating}
-                className="bg-purple-600 text-white px-6 py-2 rounded-lg hover:bg-purple-700 transition-colors disabled:bg-gray-400"
+                style={{
+                  backgroundColor: generating ? '#9ca3af' : '#7c3aed',
+                  color: 'white',
+                  padding: '8px 24px',
+                  border: 'none',
+                  borderRadius: '8px',
+                  cursor: generating ? 'not-allowed' : 'pointer',
+                  fontSize: '14px',
+                  transition: 'background-color 0.2s'
+                }}
               >
                 {generating ? 'Generating...' : 'Generate Schedule'}
               </button>
@@ -520,33 +772,71 @@ const ScheduleManagement: React.FC = () => {
 
       {/* Edit Modal */}
       {editingAssignment && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md mx-4">
-            <h3 className="text-lg font-semibold mb-4">
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000
+        }}>
+          <div style={{
+            backgroundColor: 'white',
+            borderRadius: '8px',
+            padding: '24px',
+            width: '100%',
+            maxWidth: '448px',
+            margin: '16px'
+          }}>
+            <h3 style={{
+              fontSize: '18px',
+              fontWeight: '600',
+              marginBottom: '16px'
+            }}>
               Edit Assignment - {editingAssignment.shift.name}
             </h3>
 
-            <div className="space-y-4">
-              <div className="bg-gray-50 p-3 rounded">
-                <div className="text-sm text-gray-600">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div style={{
+                backgroundColor: '#f9fafb',
+                padding: '12px',
+                borderRadius: '6px'
+              }}>
+                <div style={{ fontSize: '14px', color: '#6b7280' }}>
                   <strong>Date:</strong> {new Date(editingAssignment.assignedDate).toLocaleDateString()}
                 </div>
-                <div className="text-sm text-gray-600">
+                <div style={{ fontSize: '14px', color: '#6b7280' }}>
                   <strong>Time:</strong> {formatTime(editingAssignment.shift.startTime)} - {formatTime(editingAssignment.shift.endTime)}
                 </div>
-                <div className="text-sm text-gray-600">
+                <div style={{ fontSize: '14px', color: '#6b7280' }}>
                   <strong>Role:</strong> {editingAssignment.roleTitle.replace('_', ' ')}
                 </div>
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label style={{
+                  display: 'block',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  color: '#374151',
+                  marginBottom: '4px'
+                }}>
                   Assigned Resident
                 </label>
                 <select
                   value={newResidentId}
                   onChange={(e) => setNewResidentId(e.target.value)}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  style={{
+                    width: '100%',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '8px',
+                    padding: '8px 12px',
+                    fontSize: '14px'
+                  }}
                 >
                   <option value="">-- No Assignment --</option>
                   {residents.map(resident => (
@@ -558,13 +848,25 @@ const ScheduleManagement: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label style={{
+                  display: 'block',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  color: '#374151',
+                  marginBottom: '4px'
+                }}>
                   Status
                 </label>
                 <select
                   value={newStatus}
                   onChange={(e) => setNewStatus(e.target.value)}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  style={{
+                    width: '100%',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '8px',
+                    padding: '8px 12px',
+                    fontSize: '14px'
+                  }}
                 >
                   <option value="scheduled">Scheduled</option>
                   <option value="completed">Completed</option>
@@ -574,28 +876,65 @@ const ScheduleManagement: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label style={{
+                  display: 'block',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  color: '#374151',
+                  marginBottom: '4px'
+                }}>
                   Notes
                 </label>
                 <textarea
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
                   placeholder="Add notes..."
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   rows={3}
+                  style={{
+                    width: '100%',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '8px',
+                    padding: '8px 12px',
+                    fontSize: '14px',
+                    resize: 'vertical'
+                  }}
                 />
               </div>
 
-              <div className="flex space-x-3 pt-4">
+              <div style={{
+                display: 'flex',
+                gap: '12px',
+                paddingTop: '16px'
+              }}>
                 <button
                   onClick={handleSaveEdit}
-                  className="flex-1 bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 transition-colors"
+                  style={{
+                    flex: 1,
+                    backgroundColor: '#2563eb',
+                    color: 'white',
+                    padding: '8px 16px',
+                    border: 'none',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                    transition: 'background-color 0.2s'
+                  }}
                 >
                   Save Changes
                 </button>
                 <button
                   onClick={() => setEditingAssignment(null)}
-                  className="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-400 transition-colors"
+                  style={{
+                    flex: 1,
+                    backgroundColor: '#d1d5db',
+                    color: '#374151',
+                    padding: '8px 16px',
+                    border: 'none',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                    transition: 'background-color 0.2s'
+                  }}
                 >
                   Cancel
                 </button>
@@ -607,13 +946,41 @@ const ScheduleManagement: React.FC = () => {
 
       {/* New Period Form Modal */}
       {showNewPeriodForm && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md mx-4">
-            <h3 className="text-lg font-semibold mb-4">Create Schedule Period</h3>
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000
+        }}>
+          <div style={{
+            backgroundColor: 'white',
+            borderRadius: '8px',
+            padding: '24px',
+            width: '100%',
+            maxWidth: '448px',
+            margin: '16px'
+          }}>
+            <h3 style={{
+              fontSize: '18px',
+              fontWeight: '600',
+              marginBottom: '16px'
+            }}>Create Schedule Period</h3>
             
-            <div className="space-y-4">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label style={{
+                  display: 'block',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  color: '#374151',
+                  marginBottom: '4px'
+                }}>
                   Period Name *
                 </label>
                 <input
@@ -621,44 +988,98 @@ const ScheduleManagement: React.FC = () => {
                   value={newPeriod.name}
                   onChange={(e) => setNewPeriod({...newPeriod, name: e.target.value})}
                   placeholder="e.g., Week of June 9, 2025"
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  style={{
+                    width: '100%',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '8px',
+                    padding: '8px 12px',
+                    fontSize: '14px'
+                  }}
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label style={{
+                  display: 'block',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  color: '#374151',
+                  marginBottom: '4px'
+                }}>
                   Start Date *
                 </label>
                 <input
                   type="date"
                   value={newPeriod.startDate}
                   onChange={(e) => setNewPeriod({...newPeriod, startDate: e.target.value})}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  style={{
+                    width: '100%',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '8px',
+                    padding: '8px 12px',
+                    fontSize: '14px'
+                  }}
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label style={{
+                  display: 'block',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  color: '#374151',
+                  marginBottom: '4px'
+                }}>
                   End Date *
                 </label>
                 <input
                   type="date"
                   value={newPeriod.endDate}
                   onChange={(e) => setNewPeriod({...newPeriod, endDate: e.target.value})}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  style={{
+                    width: '100%',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '8px',
+                    padding: '8px 12px',
+                    fontSize: '14px'
+                  }}
                 />
               </div>
 
-              <div className="flex space-x-3 pt-4">
+              <div style={{
+                display: 'flex',
+                gap: '12px',
+                paddingTop: '16px'
+              }}>
                 <button
                   onClick={handleCreatePeriod}
-                  className="flex-1 bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 transition-colors"
+                  style={{
+                    flex: 1,
+                    backgroundColor: '#2563eb',
+                    color: 'white',
+                    padding: '8px 16px',
+                    border: 'none',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                    transition: 'background-color 0.2s'
+                  }}
                 >
                   Create Period
                 </button>
                 <button
                   onClick={() => setShowNewPeriodForm(false)}
-                  className="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-400 transition-colors"
+                  style={{
+                    flex: 1,
+                    backgroundColor: '#d1d5db',
+                    color: '#374151',
+                    padding: '8px 16px',
+                    border: 'none',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                    transition: 'background-color 0.2s'
+                  }}
                 >
                   Cancel
                 </button>

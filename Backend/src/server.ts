@@ -1105,14 +1105,14 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
             // KITCHEN TEAM CONSISTENCY: Prep workers also work as janitors
             else if (shift.department.name === 'kitchen') {
               if (role.roleTitle === 'janitor') {
-                // For janitor roles, try to use prep workers first
-                const prepWorkerKey = `prep_worker_${i}`;
-                if (kitchenTeams[prepWorkerKey]) {
-                  const existingResidentId = kitchenTeams[prepWorkerKey];
+                // For janitor roles, try to use ANY prep team member (workers + lead)
+                const availablePrepMembers = Object.values(kitchenTeams);
+                if (availablePrepMembers.length > i && availablePrepMembers[i]) {
+                  const existingResidentId = availablePrepMembers[i];
                   selectedResident = residents.find(r => r.id === existingResidentId);
                   
                   if (selectedResident) {
-                    console.log(`        🔄 Reusing prep worker as janitor: ${selectedResident.firstName} ${selectedResident.lastName}`);
+                    console.log(`        🔄 Reusing prep team member as janitor: ${selectedResident.firstName} ${selectedResident.lastName}`);
                   }
                 }
               }
@@ -1193,11 +1193,11 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
                   console.log(`        📝 Registered shelter run team: ${teamKey} = ${selectedResident.firstName}`);
                 }
                 
-                // KITCHEN TEAM CONSISTENCY: Remember prep workers for janitor duty
-                else if (shift.department.name === 'kitchen' && role.roleTitle === 'prep_worker') {
-                  const teamKey = `prep_worker_${i}`;
+                // KITCHEN TEAM CONSISTENCY: Remember ALL prep team members for janitor duty
+                else if (shift.department.name === 'kitchen' && (role.roleTitle === 'prep_worker' || role.roleTitle === 'prep_lead')) {
+                  const teamKey = `${role.roleTitle}_${i}`;
                   kitchenTeams[teamKey] = selectedResident.id;
-                  console.log(`        📝 Registered prep worker for janitor duty: ${teamKey} = ${selectedResident.firstName}`);
+                  console.log(`        📝 Registered prep team member for janitor duty: ${teamKey} = ${selectedResident.firstName}`);
                 }
               }
             }

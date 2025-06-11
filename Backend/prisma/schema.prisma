@@ -216,6 +216,7 @@ model SchedulePeriod {
   @@map("schedule_periods")
 }
 
+// Updated ShiftAssignment model - REMOVED unique constraint
 model ShiftAssignment {
   id               Int      @id @default(autoincrement())
   schedulePeriodId Int
@@ -233,7 +234,7 @@ model ShiftAssignment {
   shift          Shift          @relation(fields: [shiftId], references: [id])
   resident       Resident       @relation(fields: [residentId], references: [id])
 
-  @@unique([shiftId, assignedDate, roleTitle]) // Prevent double-booking same role
+  // REMOVED: @@unique([shiftId, assignedDate, roleTitle]) // This line is now gone!
   @@map("shift_assignments")
 }
 

@@ -968,7 +968,7 @@ app.post('/api/schedule-periods', async (req: any, res: any) => {
   }
 });
 
-// FIXED: Schedule generation route with proper conflict tracking
+// SIMPLIFIED: Schedule generation without unique constraint worries
 app.post('/api/generate-schedule', async (req: any, res: any) => {
   try {
     const { schedulePeriodId, startDate, endDate } = req.body;
@@ -1052,9 +1052,6 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
 
     const assignments: any[] = [];
     const conflicts: any[] = [];
-    
-    // FIXED: Use a more specific key that includes date
-    const assignmentKeys = new Set<string>();
 
     console.log(`📅 Processing ${dates.length} dates`);
 
@@ -1079,17 +1076,11 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
         console.log(`    🏢 Processing ${shift.department.name} - ${shift.name}`);
         
         for (const role of shift.roles) {
+          console.log(`      🎯 Processing role: ${role.roleTitle} (need ${role.requiredCount})`);
+          
+          // NOW WE CAN ACTUALLY FILL ALL THE REQUIRED SLOTS!
           for (let i = 0; i < role.requiredCount; i++) {
-            // FIXED: Create more specific unique key
-            const assignmentKey = `${dateStr}-${shift.id}-${role.id}-${i}`;
-            
-            // Skip if we already processed this exact slot
-            if (assignmentKeys.has(assignmentKey)) {
-              console.log(`      ⏭️  Skipping duplicate key: ${assignmentKey}`);
-              continue;
-            }
-            
-            console.log(`      🎯 Filling role: ${role.roleTitle} (${i + 1}/${role.requiredCount})`);
+            console.log(`        👤 Looking for resident for ${role.roleTitle} (slot ${i + 1}/${role.requiredCount})`);
             
             // Find eligible residents for this role
             const eligibleResidents = residents.filter(resident => {
@@ -1117,7 +1108,7 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
                 }
               }
 
-              // Check availability
+              // Check availability - default to available if no availability record
               const dayAvailability = resident.availability.find(a => a.dayOfWeek === dayOfWeek);
               if (dayAvailability) {
                 const shiftStart = new Date(`2000-01-01T${shift.startTime}:00`);
@@ -1153,7 +1144,7 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
               return conflictingAppointments.length === 0;
             });
 
-            console.log(`        👥 Found ${eligibleResidents.length} eligible residents`);
+            console.log(`          👥 Found ${eligibleResidents.length} eligible residents`);
 
             // Assign best candidate
             if (eligibleResidents.length > 0) {
@@ -1177,22 +1168,21 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
               };
               
               assignments.push(assignment);
-              assignmentKeys.add(assignmentKey);
               dayUsed.add(selectedResident.id);
               
-              console.log(`        ✅ Assigned ${selectedResident.firstName} ${selectedResident.lastName}`);
+              console.log(`          ✅ Assigned ${selectedResident.firstName} ${selectedResident.lastName}`);
             } else {
               // Record conflict - no eligible residents
               const conflict = {
                 residentId: 0,
                 conflictDate: date,
                 conflictType: 'no_eligible_residents',
-                description: `No eligible residents for ${shift.department.name} - ${shift.name} - ${role.roleTitle}`,
+                description: `No eligible residents for ${shift.department.name} - ${shift.name} - ${role.roleTitle} (slot ${i + 1}/${role.requiredCount})`,
                 severity: 'error'
               };
               
               conflicts.push(conflict);
-              console.log(`        ❌ No eligible residents - conflict recorded`);
+              console.log(`          ❌ No eligible residents - conflict recorded`);
             }
           }
         }
@@ -1203,53 +1193,56 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
     console.log(`📊 - Generated ${assignments.length} assignments`);
     console.log(`📊 - Found ${conflicts.length} conflicts`);
 
-    // FIXED: Create assignments one by one to get accurate count
+    // Create all assignments at once
     let actuallyCreated = 0;
-    const creationErrors = [];
-
-    for (const assignment of assignments) {
+    if (assignments.length > 0) {
       try {
-        await prisma.shiftAssignment.create({
-          data: assignment
+        const createResult = await prisma.shiftAssignment.createMany({
+          data: assignments
         });
-        actuallyCreated++;
+        actuallyCreated = createResult.count;
+        console.log(`📊 - Successfully created ${actuallyCreated} assignments`);
       } catch (error: any) {
-        creationErrors.push({
-          assignment,
-          error: error.message
-        });
+        console.error('💥 Error creating assignments:', error);
         
-        // Convert failed assignment to conflict
-        conflicts.push({
-          residentId: assignment.residentId,
-          conflictDate: assignment.assignedDate,
-          conflictType: 'assignment_creation_failed',
-          description: `Failed to create assignment: ${error.message}`,
-          severity: 'error'
-        });
+        // Fallback to individual creation
+        console.log('🔄 Falling back to individual creation...');
+        for (const assignment of assignments) {
+          try {
+            await prisma.shiftAssignment.create({
+              data: assignment
+            });
+            actuallyCreated++;
+          } catch (individualError: any) {
+            console.error('💥 Individual assignment failed:', individualError.message);
+            conflicts.push({
+              residentId: assignment.residentId,
+              conflictDate: assignment.assignedDate,
+              conflictType: 'assignment_creation_failed',
+              description: `Failed to create assignment: ${individualError.message}`,
+              severity: 'error'
+            });
+          }
+        }
       }
     }
-
-    console.log(`📊 - Actually created ${actuallyCreated} assignments`);
-    console.log(`📊 - Creation errors: ${creationErrors.length}`);
 
     // Create conflict records
     let conflictsCreated = 0;
     if (conflicts.length > 0) {
       try {
-        await prisma.scheduleConflict.createMany({
+        const conflictResult = await prisma.scheduleConflict.createMany({
           data: conflicts,
           skipDuplicates: true
         });
-        conflictsCreated = conflicts.length;
+        conflictsCreated = conflictResult.count;
+        console.log(`📊 - Created ${conflictsCreated} conflict records`);
       } catch (error: any) {
-        console.error('Error creating conflicts:', error);
+        console.error('💥 Error creating conflicts:', error);
       }
     }
 
-    console.log(`📊 - Created ${conflictsCreated} conflict records`);
-
-    // Return ACCURATE results
+    // Return results
     const period = await prisma.schedulePeriod.findUnique({
       where: { id: parseInt(schedulePeriodId) },
       include: {
@@ -1269,10 +1262,8 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
     const finalStats = {
       assignmentsGenerated: assignments.length,
       assignmentsCreated: actuallyCreated,
-      creationErrors: creationErrors.length,
       conflictsFound: conflicts.length,
-      conflictsCreated: conflictsCreated,
-      totalSlotsProcessed: assignments.length + conflicts.length
+      conflictsCreated: conflictsCreated
     };
 
     console.log('📊 FINAL STATS:', finalStats);

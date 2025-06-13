@@ -334,8 +334,6 @@ const createCalendarSheet = async (workbook: any) => {
       calendarData.push([deptDisplayName]);
     }
     
-    const [startTime, endTime] = timeSlot.split('-');
-    const timeDisplay = `${formatTime(startTime)} - ${formatTime(endTime)}`;
     const roleDisplay = roleTitle.replace('_', ' ');
     
     // Get all assignments for this specific combination
@@ -365,9 +363,9 @@ const createCalendarSheet = async (workbook: any) => {
       // First column: shift info (only show on first row of each role)
       if (personIndex === 0) {
         if (roleTitle === 'manager' || roleTitle === 'driver' || roleTitle === 'prep_lead' || roleTitle === 'kitchen_helper') {
-          row.push(`${shiftName} - ${roleDisplay}\n${timeDisplay}`);
+          row.push(`${shiftName} - ${roleDisplay}`);
         } else {
-          row.push(`${shiftName}\n${timeDisplay}`);
+          row.push(`${shiftName}`);
         }
       } else {
         row.push(''); // Empty for subsequent rows

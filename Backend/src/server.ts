@@ -1183,6 +1183,16 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
                   return hasTimeOverlap;
                 });
 
+// TEMPORARY: Force exclude residents with ANY appointments on the same day
+if (resident.appointments.some(apt => {
+  const aptDateStr = new Date(apt.startDateTime).toLocaleDateString('en-CA');
+  const currentDateStr = date.toLocaleDateString('en-CA');
+  return aptDateStr === currentDateStr;
+})) {
+  console.log(`🚫 TEMP: Excluding ${resident.firstName} ${resident.lastName} - has appointment on ${date.toLocaleDateString('en-CA')}`);
+  return false; // Exclude this resident
+}
+
                 // Return false if there are conflicts (excludes resident from eligibility)
                 return conflictingAppointments.length === 0;
               });

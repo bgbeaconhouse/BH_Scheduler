@@ -1152,26 +1152,56 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
                 }
 
                 // Check appointment conflicts
-                const shiftStartTime = new Date(date);
-                const shiftEndTime = new Date(date);
-                shiftStartTime.setHours(parseInt(shift.startTime.split(':')[0]), parseInt(shift.startTime.split(':')[1]));
-                shiftEndTime.setHours(parseInt(shift.endTime.split(':')[0]), parseInt(shift.endTime.split(':')[1]));
+                // Check appointment conflicts - FIXED VERSION
+const conflictingAppointments = resident.appointments.filter(apt => {
+  // Convert appointment times to local dates for comparison
+  const aptStart = new Date(apt.startDateTime);
+  const aptEnd = new Date(apt.endDateTime);
+  
+  // Get the appointment date in local timezone (YYYY-MM-DD format)
+  const aptDateStr = aptStart.toLocaleDateString('en-CA'); // YYYY-MM-DD format
+  const currentDateStr = date.toLocaleDateString('en-CA'); // YYYY-MM-DD format
+  
+  // Only check appointments on the same date
+  if (aptDateStr !== currentDateStr) return false;
 
-                const conflictingAppointments = resident.appointments.filter(apt => {
-                  const aptStart = new Date(apt.startDateTime);
-                  const aptEnd = new Date(apt.endDateTime);
-                  const aptDate = new Date(aptStart.getFullYear(), aptStart.getMonth(), aptStart.getDate());
-                  const currentDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-                  
-                  if (aptDate.getTime() !== currentDate.getTime()) return false;
+  // Check shift-specific blocking rules first
+  if (shift.blocksCounselingOnly && apt.appointmentType.name === 'counseling') return true;
+  if (shift.blocksAllAppointments) return true;
+  
+  // For time overlap checking, we need to create proper local time comparisons
+  // Create shift times in the same timezone as appointments
+  const shiftDate = new Date(date);
+  
+  // Parse shift times and create Date objects in local timezone
+  const [shiftStartHour, shiftStartMin] = shift.startTime.split(':').map(Number);
+  const [shiftEndHour, shiftEndMin] = shift.endTime.split(':').map(Number);
+  
+  const shiftStartTime = new Date(shiftDate);
+  shiftStartTime.setHours(shiftStartHour, shiftStartMin, 0, 0);
+  
+  const shiftEndTime = new Date(shiftDate);
+  shiftEndTime.setHours(shiftEndHour, shiftEndMin, 0, 0);
+  
+  // Now compare times properly - check for overlap
+  // Appointments overlap if: apt starts before shift ends AND apt ends after shift starts
+  const hasTimeOverlap = (aptStart < shiftEndTime && aptEnd > shiftStartTime);
+  
+  // Debug logging to help troubleshoot
+  if (hasTimeOverlap) {
+    console.log(`🚫 APPOINTMENT CONFLICT DETECTED:`);
+    console.log(`   Resident: ${resident.firstName} ${resident.lastName}`);
+    console.log(`   Appointment: ${apt.title} (${apt.appointmentType.name})`);
+    console.log(`   Apt Time: ${aptStart.toLocaleTimeString()} - ${aptEnd.toLocaleTimeString()}`);
+    console.log(`   Shift: ${shift.department.name} - ${shift.name}`);
+    console.log(`   Shift Time: ${shiftStartTime.toLocaleTimeString()} - ${shiftEndTime.toLocaleTimeString()}`);
+    console.log(`   Date: ${currentDateStr}`);
+  }
+  
+  return hasTimeOverlap;
+});
 
-                  if (shift.blocksCounselingOnly && apt.appointmentType.name === 'counseling') return true;
-                  if (shift.blocksAllAppointments) return true;
-                  
-                  return (aptStart < shiftEndTime && aptEnd > shiftStartTime);
-                });
-
-                return conflictingAppointments.length === 0;
+return conflictingAppointments.length === 0;
               });
 
               console.log(`          👥 Found ${eligibleResidents.length} eligible residents`);

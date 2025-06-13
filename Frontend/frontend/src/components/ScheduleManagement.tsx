@@ -276,7 +276,7 @@ const createCalendarSheet = async (workbook: any) => {
   departments.sort((a: any, b: any) => (departmentPriority[b] || 0) - (departmentPriority[a] || 0));
 
   departments.forEach((deptName: any) => {
-    if (!deptName) return; // Skip if department name is undefined
+    if (!deptName) return;
     
     // Add department header
     const deptDisplayName = deptName.replace('_', ' ').toUpperCase();
@@ -287,7 +287,7 @@ const createCalendarSheet = async (workbook: any) => {
     const timeSlots = [...new Set(deptAssignments.map((a: any) => `${a.shift?.startTime || ''}-${a.shift?.endTime || ''}`).filter(slot => slot !== '-'))].sort();
 
     timeSlots.forEach((timeSlot: any) => {
-      if (!timeSlot || timeSlot === '-') return; // Skip invalid time slots
+      if (!timeSlot || timeSlot === '-') return;
       
       // Group by shift name within this time slot
       const timeAssignments = deptAssignments.filter((a: any) => 
@@ -297,14 +297,14 @@ const createCalendarSheet = async (workbook: any) => {
       const shiftGroups = groupBy(timeAssignments, 'shift.name');
       
       Object.entries(shiftGroups).forEach(([shiftName, shiftAssignments]: [string, any]) => {
-        if (!shiftName || !shiftAssignments) return; // Skip if invalid data
+        if (!shiftName || !shiftAssignments) return;
         
         const [startTime, endTime] = timeSlot.split('-');
-        if (!startTime || !endTime) return; // Skip if time parsing failed
+        if (!startTime || !endTime) return;
         
         const timeDisplay = `${formatTime(startTime)} - ${formatTime(endTime)}`;
         
-        // Find the maximum number of workers for any day in this shift
+        // Find the maximum number of workers for any single day in this shift
         let maxWorkersPerDay = 0;
         dates.forEach(date => {
           const dateStr = date.toISOString().split('T')[0];
@@ -316,7 +316,7 @@ const createCalendarSheet = async (workbook: any) => {
           }
         });
 
-        // Create multiple rows if needed (one for each worker position)
+        // Create multiple rows - one for each worker position
         for (let workerIndex = 0; workerIndex < Math.max(1, maxWorkersPerDay); workerIndex++) {
           const row: any[] = [];
           
@@ -327,24 +327,53 @@ const createCalendarSheet = async (workbook: any) => {
             row.push(''); // Empty cell for subsequent worker rows
           }
           
-          // For each date, get the worker at this index
+          // For each date, get the specific worker at this index position
           dates.forEach(date => {
             const dateStr = date.toISOString().split('T')[0];
             const dayAssignments = (shiftAssignments as any[]).filter((a: any) => 
               a.assignedDate && a.assignedDate.split('T')[0] === dateStr
             );
             
+            // Sort assignments to ensure consistent ordering
+            dayAssignments.sort((a: any, b: any) => {
+              // Sort by role priority, then by name
+              const rolePriority: { [key: string]: number } = {
+                'manager': 1,
+                'prep_lead': 2, 
+                'kitchen_helper': 3,
+                'driver': 4,
+                'prep_worker': 5,
+                'janitor': 6,
+                'assistant': 7,
+                'worker': 8,
+                'dishwasher': 9
+              };
+              
+              const aPriority = rolePriority[a.roleTitle] || 10;
+              const bPriority = rolePriority[b.roleTitle] || 10;
+              
+              if (aPriority !== bPriority) {
+                return aPriority - bPriority;
+              }
+              
+              // If same role, sort by name
+              const aName = `${a.resident?.firstName || ''} ${a.resident?.lastName || ''}`;
+              const bName = `${b.resident?.firstName || ''} ${b.resident?.lastName || ''}`;
+              return aName.localeCompare(bName);
+            });
+            
+            // Get the worker at this specific index
             if (workerIndex < dayAssignments.length) {
               const assignment = dayAssignments[workerIndex];
               const resident = assignment?.resident;
               const role = assignment?.roleTitle;
               
               if (!resident || !resident.firstName || !resident.lastName) {
-                row.push(''); // Empty cell if resident data is missing
+                row.push('');
                 return;
               }
               
-              // Format the cell content
+              // Format the cell content - each worker gets their own cell
               if (role === 'manager' || role === 'driver' || role === 'prep_lead' || role === 'kitchen_helper') {
                 const roleDisplay = role.replace('_', ' ');
                 row.push(`${resident.firstName} ${resident.lastName} (${roleDisplay})`);
@@ -465,7 +494,7 @@ const createCalendarSheet = async (workbook: any) => {
   XLSX.utils.book_append_sheet(workbook, calendarSheet, 'Weekly Schedule');
 };
 
-// Helper function to group assignments (fixed for null safety)
+// Helper function remains the same
 const groupBy = (array: any[], key: string): { [key: string]: any[] } => {
   return array.reduce((result: { [key: string]: any[] }, item: any) => {
     const group = key.split('.').reduce((obj: any, k: string) => obj && obj[k], item);

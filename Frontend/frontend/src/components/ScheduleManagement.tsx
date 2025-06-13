@@ -265,7 +265,7 @@ const createCalendarSheet = async (workbook: any) => {
   calendarData.push(dateHeaderRow);
 
   // Group assignments by department and time
-  const departments = [...new Set(assignments.map((a: any) => a.shift.department.name))];
+  const departments = [...new Set(assignments.map((a: any) => a.shift?.department?.name).filter(Boolean))];
   const departmentPriority: { [key: string]: number } = { 
     'kitchen': 4, 
     'shelter_runs': 3, 
@@ -276,68 +276,88 @@ const createCalendarSheet = async (workbook: any) => {
   departments.sort((a: any, b: any) => (departmentPriority[b] || 0) - (departmentPriority[a] || 0));
 
   departments.forEach((deptName: any) => {
+    if (!deptName) return; // Skip if department name is undefined
+    
     // Add department header
     const deptDisplayName = deptName.replace('_', ' ').toUpperCase();
     calendarData.push([deptDisplayName]);
 
     // Get unique time slots for this department
-    const deptAssignments = assignments.filter((a: any) => a.shift.department.name === deptName);
-    const timeSlots = [...new Set(deptAssignments.map((a: any) => `${a.shift.startTime}-${a.shift.endTime}`))].sort();
+    const deptAssignments = assignments.filter((a: any) => a.shift?.department?.name === deptName);
+    const timeSlots = [...new Set(deptAssignments.map((a: any) => `${a.shift?.startTime || ''}-${a.shift?.endTime || ''}`).filter(slot => slot !== '-'))].sort();
 
     timeSlots.forEach((timeSlot: any) => {
+      if (!timeSlot || timeSlot === '-') return; // Skip invalid time slots
+      
       // Group by shift name within this time slot
       const timeAssignments = deptAssignments.filter((a: any) => 
-        `${a.shift.startTime}-${a.shift.endTime}` === timeSlot
+        `${a.shift?.startTime || ''}-${a.shift?.endTime || ''}` === timeSlot
       );
       
       const shiftGroups = groupBy(timeAssignments, 'shift.name');
       
       Object.entries(shiftGroups).forEach(([shiftName, shiftAssignments]: [string, any]) => {
+        if (!shiftName || !shiftAssignments) return; // Skip if invalid data
+        
         const [startTime, endTime] = timeSlot.split('-');
+        if (!startTime || !endTime) return; // Skip if time parsing failed
+        
         const timeDisplay = `${formatTime(startTime)} - ${formatTime(endTime)}`;
         
-        const row: any[] = [`${shiftName}\n${timeDisplay}`];
-        
-        // For each date, collect assignments
+        // Find the maximum number of workers for any day in this shift
+        let maxWorkersPerDay = 0;
         dates.forEach(date => {
           const dateStr = date.toISOString().split('T')[0];
           const dayAssignments = (shiftAssignments as any[]).filter((a: any) => 
-            a.assignedDate.split('T')[0] === dateStr
+            a.assignedDate && a.assignedDate.split('T')[0] === dateStr
           );
-          
-          if (dayAssignments.length === 0) {
-            row.push('');
-          } else {
-            // Group by role and format nicely
-            const roleGroups: { [key: string]: any[] } = {};
-            dayAssignments.forEach((assignment: any) => {
-              if (!roleGroups[assignment.roleTitle]) {
-                roleGroups[assignment.roleTitle] = [];
-              }
-              roleGroups[assignment.roleTitle].push(assignment.resident);
-            });
-            
-            const cellContent = Object.entries(roleGroups).map(([role, residents]: [string, any[]]) => {
-              const roleDisplay = role.replace('_', ' ');
-              if (residents.length === 1) {
-                const resident = residents[0];
-                return role === 'manager' || role === 'driver' || role === 'prep_lead' || role === 'kitchen_helper'
-                  ? `${resident.firstName} ${resident.lastName} (${roleDisplay})`
-                  : `${resident.firstName} ${resident.lastName}`;
-              } else {
-                return residents.map((resident: any) => {
-                  return role === 'manager' || role === 'driver' || role === 'prep_lead' || role === 'kitchen_helper'
-                    ? `${resident.firstName} ${resident.lastName} (${roleDisplay})`
-                    : `${resident.firstName} ${resident.lastName}`;
-                }).join('\n');
-              }
-            }).join('\n');
-            
-            row.push(cellContent);
+          if (dayAssignments.length > maxWorkersPerDay) {
+            maxWorkersPerDay = dayAssignments.length;
           }
         });
-        
-        calendarData.push(row);
+
+        // Create multiple rows if needed (one for each worker position)
+        for (let workerIndex = 0; workerIndex < Math.max(1, maxWorkersPerDay); workerIndex++) {
+          const row: any[] = [];
+          
+          // First column: shift name and time (only on the first row)
+          if (workerIndex === 0) {
+            row.push(`${shiftName}\n${timeDisplay}`);
+          } else {
+            row.push(''); // Empty cell for subsequent worker rows
+          }
+          
+          // For each date, get the worker at this index
+          dates.forEach(date => {
+            const dateStr = date.toISOString().split('T')[0];
+            const dayAssignments = (shiftAssignments as any[]).filter((a: any) => 
+              a.assignedDate && a.assignedDate.split('T')[0] === dateStr
+            );
+            
+            if (workerIndex < dayAssignments.length) {
+              const assignment = dayAssignments[workerIndex];
+              const resident = assignment?.resident;
+              const role = assignment?.roleTitle;
+              
+              if (!resident || !resident.firstName || !resident.lastName) {
+                row.push(''); // Empty cell if resident data is missing
+                return;
+              }
+              
+              // Format the cell content
+              if (role === 'manager' || role === 'driver' || role === 'prep_lead' || role === 'kitchen_helper') {
+                const roleDisplay = role.replace('_', ' ');
+                row.push(`${resident.firstName} ${resident.lastName} (${roleDisplay})`);
+              } else {
+                row.push(`${resident.firstName} ${resident.lastName}`);
+              }
+            } else {
+              row.push(''); // Empty cell if no worker at this index
+            }
+          });
+          
+          calendarData.push(row);
+        }
       });
     });
 
@@ -350,27 +370,107 @@ const createCalendarSheet = async (workbook: any) => {
   // Set column widths
   calendarSheet['!cols'] = [
     { wch: 25 }, // Time/shift column
-    ...dates.map(() => ({ wch: 30 })) // Date columns
+    ...dates.map(() => ({ wch: 25 })) // Date columns
   ];
 
-  // Set row heights for multi-line content
-  calendarSheet['!rows'] = calendarData.map((row: any[], index: number) => {
-    if (index === 0) return { hpt: 20 }; // Title row
-    if (row[0] && typeof row[0] === 'string' && (row[0].includes('KITCHEN') || row[0].includes('SHELTER') || row[0].includes('THRIFT') || row[0].includes('MAINTENANCE'))) {
-      return { hpt: 25 }; // Department headers
+  // Set row heights
+  if (calendarSheet['!rows']) {
+    calendarSheet['!rows'] = calendarData.map((row: any[], index: number) => {
+      if (index === 0) return { hpt: 20 }; // Title row
+      if (row[0] && typeof row[0] === 'string' && (row[0].includes('KITCHEN') || row[0].includes('SHELTER') || row[0].includes('THRIFT') || row[0].includes('MAINTENANCE'))) {
+        return { hpt: 25 }; // Department headers
+      }
+      return { hpt: 20 }; // Standard height
+    });
+  }
+
+  // Apply styling
+  if (calendarSheet['!ref']) {
+    const range = XLSX.utils.decode_range(calendarSheet['!ref']);
+    
+    for (let R = range.s.r; R <= range.e.r; ++R) {
+      for (let C = range.s.c; C <= range.e.c; ++C) {
+        const cellAddress = XLSX.utils.encode_cell({ r: R, c: C });
+        if (!calendarSheet[cellAddress]) continue;
+        
+        const cell = calendarSheet[cellAddress];
+        
+        // Title row styling
+        if (R === 0) {
+          cell.s = {
+            font: { bold: true, size: 14 },
+            alignment: { horizontal: 'center' },
+            fill: { fgColor: { rgb: 'D0D0D0' } }
+          };
+        }
+        // Date header row styling
+        else if (R === 2) {
+          cell.s = {
+            font: { bold: true },
+            alignment: { horizontal: 'center' },
+            fill: { fgColor: { rgb: 'E0E0E0' } },
+            border: {
+              top: { style: 'thin' },
+              bottom: { style: 'thin' },
+              left: { style: 'thin' },
+              right: { style: 'thin' }
+            }
+          };
+        }
+        // Department header styling
+        else if (cell.v && typeof cell.v === 'string' && 
+                 (cell.v.includes('KITCHEN') || cell.v.includes('SHELTER') || 
+                  cell.v.includes('THRIFT') || cell.v.includes('MAINTENANCE'))) {
+          cell.s = {
+            font: { bold: true },
+            fill: { fgColor: { rgb: 'C0C0C0' } },
+            border: {
+              top: { style: 'medium' },
+              bottom: { style: 'thin' },
+              left: { style: 'thin' },
+              right: { style: 'thin' }
+            }
+          };
+        }
+        // Time/shift column styling
+        else if (C === 0 && cell.v && typeof cell.v === 'string' && cell.v.includes('\n')) {
+          cell.s = {
+            font: { bold: true },
+            fill: { fgColor: { rgb: 'F0F0F0' } },
+            alignment: { vertical: 'top', wrapText: true },
+            border: {
+              top: { style: 'thin' },
+              bottom: { style: 'thin' },
+              left: { style: 'thin' },
+              right: { style: 'thin' }
+            }
+          };
+        }
+        // Data cell styling
+        else if (C > 0 && R > 2) {
+          cell.s = {
+            alignment: { vertical: 'center', horizontal: 'left' },
+            border: {
+              top: { style: 'thin' },
+              bottom: { style: 'thin' },
+              left: { style: 'thin' },
+              right: { style: 'thin' }
+            }
+          };
+        }
+      }
     }
-    return { hpt: 80 }; // Data rows with multiple names
-  });
+  }
 
   XLSX.utils.book_append_sheet(workbook, calendarSheet, 'Weekly Schedule');
 };
 
-// Helper function to group assignments
+// Helper function to group assignments (fixed for null safety)
 const groupBy = (array: any[], key: string): { [key: string]: any[] } => {
   return array.reduce((result: { [key: string]: any[] }, item: any) => {
     const group = key.split('.').reduce((obj: any, k: string) => obj && obj[k], item);
-    if (!result[group]) result[group] = [];
-    result[group].push(item);
+    if (group && !result[group]) result[group] = [];
+    if (group) result[group].push(item);
     return result;
   }, {});
 };

@@ -246,6 +246,8 @@ const ScheduleManagement: React.FC = () => {
     }
   };
 
+// Reverted createCalendarSheet function - back to original version
+
 const createCalendarSheet = async (workbook: any) => {
   const dates = getWeekDates(selectedPeriod!.startDate, selectedPeriod!.endDate);
   const calendarData: any[][] = [];
@@ -296,9 +298,9 @@ const createCalendarSheet = async (workbook: any) => {
       'prep_lead': 2, 
       'kitchen_helper': 3,
       'driver': 4,
-      'prep_worker': 5,
-      'janitor': 6,
-      'assistant': 7,
+      'assistant': 5, // Assistant now comes right after driver
+      'prep_worker': 6,
+      'janitor': 7,
       'worker': 8,
       'dishwasher': 9
     };

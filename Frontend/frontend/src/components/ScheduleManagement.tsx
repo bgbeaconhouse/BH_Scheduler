@@ -256,7 +256,7 @@ const createCalendarSheet = async (workbook: any) => {
   calendarData.push([]); // Empty row for spacing
 
   // Create date header row
-  const dateHeaderRow: any[] = [''];
+  const dateHeaderRow: any[] = ['Shift/Time'];
   dates.forEach(date => {
     const dayName = date.toLocaleDateString('en-US', { weekday: 'short' });
     const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
@@ -264,154 +264,154 @@ const createCalendarSheet = async (workbook: any) => {
   });
   calendarData.push(dateHeaderRow);
 
-  // Group assignments by department and time
-  const departments = [...new Set(assignments.map((a: any) => a.shift?.department?.name).filter(Boolean))];
-  const departmentPriority: { [key: string]: number } = { 
-    'kitchen': 4, 
-    'shelter_runs': 3, 
-    'thrift_stores': 2, 
-    'maintenance': 1 
-  };
+  // Create a comprehensive list of all unique shift+time+role combinations
+  const allShiftCombinations = new Set<string>();
   
-  departments.sort((a: any, b: any) => (departmentPriority[b] || 0) - (departmentPriority[a] || 0));
+  assignments.forEach((assignment: any) => {
+    if (assignment.shift && assignment.shift.department) {
+      const key = `${assignment.shift.department.name}|${assignment.shift.name}|${assignment.shift.startTime}-${assignment.shift.endTime}|${assignment.roleTitle}`;
+      allShiftCombinations.add(key);
+    }
+  });
 
-  departments.forEach((deptName: any) => {
-    if (!deptName) return;
+  // Sort combinations by department priority, then time, then role
+  const sortedCombinations = Array.from(allShiftCombinations).sort((a, b) => {
+    const [aDept, aShift, aTime, aRole] = a.split('|');
+    const [bDept, bShift, bTime, bRole] = b.split('|');
     
-    // Add department header
-    const deptDisplayName = deptName.replace('_', ' ').toUpperCase();
-    calendarData.push([deptDisplayName]);
+    const departmentPriority: { [key: string]: number } = { 
+      'kitchen': 4, 
+      'shelter_runs': 3, 
+      'thrift_stores': 2, 
+      'maintenance': 1 
+    };
+    
+    const rolePriority: { [key: string]: number } = {
+      'manager': 1,
+      'prep_lead': 2, 
+      'kitchen_helper': 3,
+      'driver': 4,
+      'prep_worker': 5,
+      'janitor': 6,
+      'assistant': 7,
+      'worker': 8,
+      'dishwasher': 9
+    };
+    
+    // Sort by department first
+    const aDeptPriority = departmentPriority[aDept] || 0;
+    const bDeptPriority = departmentPriority[bDept] || 0;
+    if (aDeptPriority !== bDeptPriority) {
+      return bDeptPriority - aDeptPriority;
+    }
+    
+    // Then by time
+    if (aTime !== bTime) {
+      return aTime.localeCompare(bTime);
+    }
+    
+    // Then by shift name
+    if (aShift !== bShift) {
+      return aShift.localeCompare(bShift);
+    }
+    
+    // Finally by role priority
+    const aRolePriority = rolePriority[aRole] || 10;
+    const bRolePriority = rolePriority[bRole] || 10;
+    return aRolePriority - bRolePriority;
+  });
 
-    // Get unique time slots for this department
-    const deptAssignments = assignments.filter((a: any) => a.shift?.department?.name === deptName);
-    const timeSlots = [...new Set(deptAssignments.map((a: any) => `${a.shift?.startTime || ''}-${a.shift?.endTime || ''}`).filter(slot => slot !== '-'))].sort();
+  let currentDept = '';
+  
+  // Create rows for each shift+role combination
+  sortedCombinations.forEach(combination => {
+    const [deptName, shiftName, timeSlot, roleTitle] = combination.split('|');
+    
+    // Add department header when we encounter a new department
+    if (deptName !== currentDept) {
+      currentDept = deptName;
+      const deptDisplayName = deptName.replace('_', ' ').toUpperCase();
+      calendarData.push([deptDisplayName]);
+    }
+    
+    const [startTime, endTime] = timeSlot.split('-');
+    const timeDisplay = `${formatTime(startTime)} - ${formatTime(endTime)}`;
+    const roleDisplay = roleTitle.replace('_', ' ');
+    
+    // Get all assignments for this specific combination
+    const combinationAssignments = assignments.filter((a: any) => 
+      a.shift?.department?.name === deptName &&
+      a.shift?.name === shiftName &&
+      `${a.shift?.startTime}-${a.shift?.endTime}` === timeSlot &&
+      a.roleTitle === roleTitle
+    );
 
-    timeSlots.forEach((timeSlot: any) => {
-      if (!timeSlot || timeSlot === '-') return;
-      
-      // Group by shift name within this time slot
-      const timeAssignments = deptAssignments.filter((a: any) => 
-        `${a.shift?.startTime || ''}-${a.shift?.endTime || ''}` === timeSlot
+    // Find the maximum number of people with this role on any single day
+    let maxPeopleForThisRole = 0;
+    dates.forEach(date => {
+      const dateStr = date.toISOString().split('T')[0];
+      const dayAssignments = combinationAssignments.filter((a: any) => 
+        a.assignedDate && a.assignedDate.split('T')[0] === dateStr
       );
-      
-      const shiftGroups = groupBy(timeAssignments, 'shift.name');
-      
-      Object.entries(shiftGroups).forEach(([shiftName, shiftAssignments]: [string, any]) => {
-        if (!shiftName || !shiftAssignments) return;
-        
-        const [startTime, endTime] = timeSlot.split('-');
-        if (!startTime || !endTime) return;
-        
-        const timeDisplay = `${formatTime(startTime)} - ${formatTime(endTime)}`;
-        
-        // Find the maximum number of workers for any single day in this shift
-        let maxWorkersPerDay = 0;
-        dates.forEach(date => {
-          const dateStr = date.toISOString().split('T')[0];
-          const dayAssignments = (shiftAssignments as any[]).filter((a: any) => 
-            a.assignedDate && a.assignedDate.split('T')[0] === dateStr
-          );
-          if (dayAssignments.length > maxWorkersPerDay) {
-            maxWorkersPerDay = dayAssignments.length;
-          }
-        });
-
-        // Create multiple rows - one for each worker position
-        for (let workerIndex = 0; workerIndex < Math.max(1, maxWorkersPerDay); workerIndex++) {
-          const row: any[] = [];
-          
-          // First column: shift name and time (only on the first row)
-          if (workerIndex === 0) {
-            row.push(`${shiftName}\n${timeDisplay}`);
-          } else {
-            row.push(''); // Empty cell for subsequent worker rows
-          }
-          
-          // For each date, get the specific worker at this index position
-          dates.forEach(date => {
-            const dateStr = date.toISOString().split('T')[0];
-            const dayAssignments = (shiftAssignments as any[]).filter((a: any) => 
-              a.assignedDate && a.assignedDate.split('T')[0] === dateStr
-            );
-            
-            // Sort assignments to ensure consistent ordering
-            dayAssignments.sort((a: any, b: any) => {
-              // Sort by role priority, then by name
-              const rolePriority: { [key: string]: number } = {
-                'manager': 1,
-                'prep_lead': 2, 
-                'kitchen_helper': 3,
-                'driver': 4,
-                'prep_worker': 5,
-                'janitor': 6,
-                'assistant': 7,
-                'worker': 8,
-                'dishwasher': 9
-              };
-              
-              const aPriority = rolePriority[a.roleTitle] || 10;
-              const bPriority = rolePriority[b.roleTitle] || 10;
-              
-              if (aPriority !== bPriority) {
-                return aPriority - bPriority;
-              }
-              
-              // If same role, sort by name
-              const aName = `${a.resident?.firstName || ''} ${a.resident?.lastName || ''}`;
-              const bName = `${b.resident?.firstName || ''} ${b.resident?.lastName || ''}`;
-              return aName.localeCompare(bName);
-            });
-            
-            // Get the worker at this specific index
-            if (workerIndex < dayAssignments.length) {
-              const assignment = dayAssignments[workerIndex];
-              const resident = assignment?.resident;
-              const role = assignment?.roleTitle;
-              
-              if (!resident || !resident.firstName || !resident.lastName) {
-                row.push('');
-                return;
-              }
-              
-              // Format the cell content - each worker gets their own cell
-              if (role === 'manager' || role === 'driver' || role === 'prep_lead' || role === 'kitchen_helper') {
-                const roleDisplay = role.replace('_', ' ');
-                row.push(`${resident.firstName} ${resident.lastName} (${roleDisplay})`);
-              } else {
-                row.push(`${resident.firstName} ${resident.lastName}`);
-              }
-            } else {
-              row.push(''); // Empty cell if no worker at this index
-            }
-          });
-          
-          calendarData.push(row);
-        }
-      });
+      if (dayAssignments.length > maxPeopleForThisRole) {
+        maxPeopleForThisRole = dayAssignments.length;
+      }
     });
 
-    // Add empty row between departments
-    calendarData.push([]);
+    // Create separate rows for each person in this role
+    for (let personIndex = 0; personIndex < Math.max(1, maxPeopleForThisRole); personIndex++) {
+      const row: any[] = [];
+      
+      // First column: shift info (only show on first row of each role)
+      if (personIndex === 0) {
+        if (roleTitle === 'manager' || roleTitle === 'driver' || roleTitle === 'prep_lead' || roleTitle === 'kitchen_helper') {
+          row.push(`${shiftName} - ${roleDisplay}\n${timeDisplay}`);
+        } else {
+          row.push(`${shiftName}\n${timeDisplay}`);
+        }
+      } else {
+        row.push(''); // Empty for subsequent rows
+      }
+      
+      // For each date, get the person at this index for this specific role
+      dates.forEach(date => {
+        const dateStr = date.toISOString().split('T')[0];
+        const dayAssignments = combinationAssignments.filter((a: any) => 
+          a.assignedDate && a.assignedDate.split('T')[0] === dateStr
+        );
+        
+        // Sort to ensure consistent ordering
+        dayAssignments.sort((a: any, b: any) => {
+          const aName = `${a.resident?.firstName || ''} ${a.resident?.lastName || ''}`;
+          const bName = `${b.resident?.firstName || ''} ${b.resident?.lastName || ''}`;
+          return aName.localeCompare(bName);
+        });
+        
+        if (personIndex < dayAssignments.length) {
+          const assignment = dayAssignments[personIndex];
+          const resident = assignment?.resident;
+          
+          if (resident && resident.firstName && resident.lastName) {
+            row.push(`${resident.firstName} ${resident.lastName}`);
+          } else {
+            row.push('');
+          }
+        } else {
+          row.push(''); // Empty cell if no person at this index
+        }
+      });
+      
+      calendarData.push(row);
+    }
   });
 
   const calendarSheet = XLSX.utils.aoa_to_sheet(calendarData);
   
   // Set column widths
   calendarSheet['!cols'] = [
-    { wch: 25 }, // Time/shift column
-    ...dates.map(() => ({ wch: 25 })) // Date columns
+    { wch: 30 }, // Shift/time column
+    ...dates.map(() => ({ wch: 20 })) // Date columns
   ];
-
-  // Set row heights
-  if (calendarSheet['!rows']) {
-    calendarSheet['!rows'] = calendarData.map((row: any[], index: number) => {
-      if (index === 0) return { hpt: 20 }; // Title row
-      if (row[0] && typeof row[0] === 'string' && (row[0].includes('KITCHEN') || row[0].includes('SHELTER') || row[0].includes('THRIFT') || row[0].includes('MAINTENANCE'))) {
-        return { hpt: 25 }; // Department headers
-      }
-      return { hpt: 20 }; // Standard height
-    });
-  }
 
   // Apply styling
   if (calendarSheet['!ref']) {
@@ -461,7 +461,7 @@ const createCalendarSheet = async (workbook: any) => {
             }
           };
         }
-        // Time/shift column styling
+        // Shift/time column styling
         else if (C === 0 && cell.v && typeof cell.v === 'string' && cell.v.includes('\n')) {
           cell.s = {
             font: { bold: true },
@@ -478,7 +478,7 @@ const createCalendarSheet = async (workbook: any) => {
         // Data cell styling
         else if (C > 0 && R > 2) {
           cell.s = {
-            alignment: { vertical: 'center', horizontal: 'left' },
+            alignment: { vertical: 'center', horizontal: 'center' },
             border: {
               top: { style: 'thin' },
               bottom: { style: 'thin' },
@@ -494,15 +494,7 @@ const createCalendarSheet = async (workbook: any) => {
   XLSX.utils.book_append_sheet(workbook, calendarSheet, 'Weekly Schedule');
 };
 
-// Helper function remains the same
-const groupBy = (array: any[], key: string): { [key: string]: any[] } => {
-  return array.reduce((result: { [key: string]: any[] }, item: any) => {
-    const group = key.split('.').reduce((obj: any, k: string) => obj && obj[k], item);
-    if (group && !result[group]) result[group] = [];
-    if (group) result[group].push(item);
-    return result;
-  }, {});
-};
+
 
   const createAssignmentsSheet = async (workbook: any) => {
     const assignmentsData = [

@@ -1059,6 +1059,13 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
     for (const date of dates) {
       const dayOfWeek = date.getDay();
       const dayUsed = new Set<number>(); 
+      // Track weekly work counts for each resident
+const weeklyWorkCounts = new Map<number, number>();
+
+// Initialize weekly counts for all residents
+residents.forEach(resident => {
+  weeklyWorkCounts.set(resident.id, 0);
+});
       const dateStr = date.toISOString().split('T')[0];
       
       // SIMPLE FIX: Track consistent teams for this day
@@ -1151,6 +1158,12 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
                   if (shiftStart < availStart || shiftEnd > availEnd) return false;
                 }
 
+                // Check weekly work limit (3 times maximum)
+const currentWeeklyCount = weeklyWorkCounts.get(resident.id) || 0;
+if (currentWeeklyCount >= 3) {
+  console.log(`🚫 WEEKLY LIMIT: ${resident.firstName} ${resident.lastName} already worked ${currentWeeklyCount} times this week`);
+  return false;
+}
                 // Check appointment conflicts
                 const conflictingAppointments = resident.appointments.filter(apt => {
                   const aptStart = new Date(apt.startDateTime);
@@ -1202,11 +1215,20 @@ if (resident.appointments.some(apt => {
 
               if (eligibleResidents.length > 0) {
                 // Load balancing - prefer residents with fewer assignments
-                const sortedCandidates = eligibleResidents.sort((a, b) => {
-                  const aAssignments = assignments.filter(assign => assign.residentId === a.id).length;
-                  const bAssignments = assignments.filter(assign => assign.residentId === b.id).length;
-                  return aAssignments - bAssignments;
-                });
+              const sortedCandidates = eligibleResidents.sort((a, b) => {
+  // First priority: weekly work count (fewer is better)
+  const aWeeklyCount = weeklyWorkCounts.get(a.id) || 0;
+  const bWeeklyCount = weeklyWorkCounts.get(b.id) || 0;
+  
+  if (aWeeklyCount !== bWeeklyCount) {
+    return aWeeklyCount - bWeeklyCount;
+  }
+  
+  // Second priority: current assignments in this generation
+  const aAssignments = assignments.filter(assign => assign.residentId === a.id).length;
+  const bAssignments = assignments.filter(assign => assign.residentId === b.id).length;
+  return aAssignments - bAssignments;
+});
 
                 selectedResident = sortedCandidates[0];
                 
@@ -1238,6 +1260,11 @@ if (resident.appointments.some(apt => {
               };
               
               assignments.push(assignment);
+
+              // Update weekly work count
+const currentCount = weeklyWorkCounts.get(selectedResident.id) || 0;
+weeklyWorkCounts.set(selectedResident.id, currentCount + 1);
+console.log(`📊 WORK COUNT: ${selectedResident.firstName} ${selectedResident.lastName} now has ${currentCount + 1} assignments this week`);
               
               // Only mark as dayUsed if this is their first assignment of the day
               // (shelter run people can work multiple shelter runs, prep workers can also do janitor)

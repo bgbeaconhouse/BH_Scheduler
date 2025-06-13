@@ -972,6 +972,9 @@ app.post('/api/schedule-periods', async (req: any, res: any) => {
 // Enhanced schedule generation logic with proper 3-day work limit
 // Replace the generate-schedule endpoint in your backend (around line 900)
 
+// FIXED VERSION: Replace your /api/generate-schedule endpoint with this corrected version
+// This properly counts work DAYS, not individual shift assignments
+
 app.post('/api/generate-schedule', async (req: any, res: any) => {
   try {
     const { schedulePeriodId, startDate, endDate } = req.body;
@@ -980,7 +983,7 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       return res.status(400).json({ error: 'Schedule period ID, start date, and end date are required' });
     }
 
-    console.log('🔥 SCHEDULE GENERATION STARTED - WITH 3-DAY WORK LIMIT');
+    console.log('🔥 SCHEDULE GENERATION STARTED - WITH PROPER 3-DAY WORK LIMIT');
     console.log('Period:', schedulePeriodId, 'Dates:', startDate, 'to', endDate);
 
     // Clear existing assignments for this period
@@ -1056,13 +1059,13 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
     const assignments: any[] = [];
     const conflicts: any[] = [];
 
-    // Track weekly work counts for each resident (KEY ENHANCEMENT)
-    const weeklyWorkCounts = new Map<number, number>();
+    // 🚨 FIXED: Track which residents worked on which DAYS (not individual shifts)
+    const weeklyWorkDays = new Map<number, Set<string>>(); // residentId -> Set of date strings
     residents.forEach(resident => {
-      weeklyWorkCounts.set(resident.id, 0);
+      weeklyWorkDays.set(resident.id, new Set());
     });
 
-    console.log(`📅 Processing ${dates.length} dates with 3-day work limit`);
+    console.log(`📅 Processing ${dates.length} dates with PROPER 3-day work limit enforcement`);
 
     // Process each date
     for (const date of dates) {
@@ -1096,7 +1099,7 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
             
             let selectedResident = null;
             
-            // Check for existing team assignments (shelter runs, kitchen teams)
+            // 🚨 FIXED: Check for existing team assignments but allow reuse within same day
             if (shift.department.name === 'shelter_runs') {
               const teamKey = `${role.roleTitle}_${i}`;
               
@@ -1127,17 +1130,25 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
             if (!selectedResident) {
               // Find eligible residents for this role
               const eligibleResidents = residents.filter(resident => {
-                // Check if already assigned this day
-                if (dayUsed.has(resident.id)) return false;
+                // 🚨 FIXED: Only check dayUsed for NON-TEAM roles to allow multiple shelter runs per person per day
+                const isTeamRole = (
+                  shift.department.name === 'shelter_runs' ||
+                  (shift.department.name === 'kitchen' && role.roleTitle === 'janitor')
+                );
+                
+                if (!isTeamRole && dayUsed.has(resident.id)) {
+                  console.log(`🚫 ALREADY USED: ${resident.firstName} ${resident.lastName} already assigned today`);
+                  return false;
+                }
 
-                // Check for San Pedro only restriction
+                // Check for Pedro-only restriction
                 const hasPedroOnlyQualification = resident.qualifications.some(
                   rq => rq.qualification.name === 'thrift_pedro_only'
                 );
                 
                 if (hasPedroOnlyQualification) {
                   if (shift.department.name !== 'thrift_stores' || shift.name !== 'San Pedro Thrift Store') {
-                    console.log(`🚫 PEDRO ONLY: ${resident.firstName} ${resident.lastName} excluded from ${shift.department.name}-${shift.name} (Pedro-only worker)`);
+                    console.log(`🚫 PEDRO ONLY: ${resident.firstName} ${resident.lastName} excluded from ${shift.department.name}-${shift.name}`);
                     return false;
                   }
                 }
@@ -1168,69 +1179,39 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
                   if (shiftStart < availStart || shiftEnd > availEnd) return false;
                 }
 
-                // 🚨 ENHANCED: Check 3-day weekly work limit
-                const currentWeeklyCount = weeklyWorkCounts.get(resident.id) || 0;
-                if (currentWeeklyCount >= 3) {
-                  console.log(`🚫 3-DAY LIMIT: ${resident.firstName} ${resident.lastName} already worked ${currentWeeklyCount} days this week`);
+                // 🚨 FIXED: Check 3-day weekly WORK DAYS limit (not individual shifts)
+                const currentWorkDays = weeklyWorkDays.get(resident.id) || new Set();
+                if (currentWorkDays.size >= 3) {
+                  console.log(`🚫 3-DAY LIMIT: ${resident.firstName} ${resident.lastName} already worked ${currentWorkDays.size} days this week`);
                   return false;
                 }
 
                 // Check appointment conflicts
-                const conflictingAppointments = resident.appointments.filter(apt => {
-                  const aptStart = new Date(apt.startDateTime);
-                  const aptEnd = new Date(apt.endDateTime);
-                  
-                  const aptDateStr = aptStart.toLocaleDateString('en-CA');
-                  const currentDateStr = date.toLocaleDateString('en-CA');
-                  
-                  if (aptDateStr !== currentDateStr) return false;
-
-                  if (shift.blocksCounselingOnly && apt.appointmentType.name === 'counseling') return true;
-                  if (shift.blocksAllAppointments) return true;
-                  
-                  const shiftDate = new Date(date);
-                  const [shiftStartHour, shiftStartMin] = shift.startTime.split(':').map(Number);
-                  const [shiftEndHour, shiftEndMin] = shift.endTime.split(':').map(Number);
-                  
-                  const shiftStartTime = new Date(shiftDate);
-                  shiftStartTime.setHours(shiftStartHour, shiftStartMin, 0, 0);
-                  
-                  const shiftEndTime = new Date(shiftDate);
-                  shiftEndTime.setHours(shiftEndHour, shiftEndMin, 0, 0);
-                  
-                  const hasTimeOverlap = (aptStart < shiftEndTime && aptEnd > shiftStartTime);
-                  
-                  if (hasTimeOverlap) {
-                    console.log(`🚫 CONFLICT: ${resident.firstName} ${resident.lastName} excluded from ${shift.department.name}-${shift.name} due to ${apt.title} appointment`);
-                  }
-                  
-                  return hasTimeOverlap;
-                });
-
-                // Exclude residents with appointments on the same day
-                if (resident.appointments.some(apt => {
+                const hasAppointmentConflict = resident.appointments.some(apt => {
                   const aptDateStr = new Date(apt.startDateTime).toLocaleDateString('en-CA');
                   const currentDateStr = date.toLocaleDateString('en-CA');
                   return aptDateStr === currentDateStr;
-                })) {
-                  console.log(`🚫 APPOINTMENT: Excluding ${resident.firstName} ${resident.lastName} - has appointment on ${date.toLocaleDateString('en-CA')}`);
+                });
+
+                if (hasAppointmentConflict) {
+                  console.log(`🚫 APPOINTMENT: ${resident.firstName} ${resident.lastName} has appointment on ${date.toLocaleDateString('en-CA')}`);
                   return false;
                 }
 
-                return conflictingAppointments.length === 0;
+                return true;
               });
 
               console.log(`          👥 Found ${eligibleResidents.length} eligible residents`);
 
               if (eligibleResidents.length > 0) {
-                // Load balancing - prefer residents with fewer work days
+                // 🚨 FIXED: Load balancing - prefer residents with fewer work DAYS
                 const sortedCandidates = eligibleResidents.sort((a, b) => {
-                  // First priority: weekly work count (fewer is better)
-                  const aWeeklyCount = weeklyWorkCounts.get(a.id) || 0;
-                  const bWeeklyCount = weeklyWorkCounts.get(b.id) || 0;
+                  // First priority: number of work days (fewer is better)
+                  const aWorkDays = (weeklyWorkDays.get(a.id) || new Set()).size;
+                  const bWorkDays = (weeklyWorkDays.get(b.id) || new Set()).size;
                   
-                  if (aWeeklyCount !== bWeeklyCount) {
-                    return aWeeklyCount - bWeeklyCount;
+                  if (aWorkDays !== bWorkDays) {
+                    return aWorkDays - bWorkDays;
                   }
                   
                   // Second priority: current assignments in this generation
@@ -1268,18 +1249,19 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
               
               assignments.push(assignment);
 
-              // 🚨 ENHANCED: Update weekly work count
-              const currentCount = weeklyWorkCounts.get(selectedResident.id) || 0;
-              weeklyWorkCounts.set(selectedResident.id, currentCount + 1);
-              console.log(`📊 WORK COUNT: ${selectedResident.firstName} ${selectedResident.lastName} now has ${currentCount + 1} work days this week`);
+              // 🚨 FIXED: Update weekly work DAYS (not individual shift counts)
+              const currentWorkDays = weeklyWorkDays.get(selectedResident.id) || new Set();
+              currentWorkDays.add(dateStr);
+              weeklyWorkDays.set(selectedResident.id, currentWorkDays);
+              console.log(`📊 WORK DAYS: ${selectedResident.firstName} ${selectedResident.lastName} now has ${currentWorkDays.size} work days this week`);
               
-              // Only mark as dayUsed if this is their first assignment of the day
-              const isReusedTeamMember = (
-                (shift.department.name === 'shelter_runs' && Object.values(shelterRunTeams).includes(selectedResident.id)) ||
-                (shift.department.name === 'kitchen' && role.roleTitle === 'janitor' && Object.values(kitchenTeams).includes(selectedResident.id))
+              // 🚨 FIXED: Mark as dayUsed only for non-team roles
+              const isTeamRole = (
+                shift.department.name === 'shelter_runs' ||
+                (shift.department.name === 'kitchen' && role.roleTitle === 'janitor')
               );
               
-              if (!isReusedTeamMember) {
+              if (!isTeamRole) {
                 dayUsed.add(selectedResident.id);
               }
               
@@ -1302,23 +1284,30 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       }
     }
 
-    // Log final work distribution
-    console.log(`\n📊 FINAL WORK DISTRIBUTION:`);
-    weeklyWorkCounts.forEach((count, residentId) => {
-      if (count > 0) {
+    // 🚨 FIXED: Log final work distribution by DAYS
+    console.log(`\n📊 FINAL WORK DISTRIBUTION BY DAYS:`);
+    let workDayStats = { 3: 0, 2: 0, 1: 0, 0: 0 };
+    
+    weeklyWorkDays.forEach((workDaySet, residentId) => {
+      const workDayCount = workDaySet.size;
+      if (workDayCount > 0) {
         const resident = residents.find(r => r.id === residentId);
-        console.log(`📊 - ${resident?.firstName} ${resident?.lastName}: ${count} work days`);
+        console.log(`📊 - ${resident?.firstName} ${resident?.lastName}: ${workDayCount} work days (${Array.from(workDaySet).join(', ')})`);
+        workDayStats[workDayCount as keyof typeof workDayStats] = (workDayStats[workDayCount as keyof typeof workDayStats] || 0) + 1;
+      } else {
+        workDayStats[0]++;
       }
     });
 
     console.log(`\n📊 GENERATION COMPLETE:`);
     console.log(`📊 - Generated ${assignments.length} assignments`);
     console.log(`📊 - Found ${conflicts.length} conflicts`);
-    console.log(`📊 - Residents working 3 days: ${Array.from(weeklyWorkCounts.values()).filter(count => count === 3).length}`);
-    console.log(`📊 - Residents working 2 days: ${Array.from(weeklyWorkCounts.values()).filter(count => count === 2).length}`);
-    console.log(`📊 - Residents working 1 day: ${Array.from(weeklyWorkCounts.values()).filter(count => count === 1).length}`);
+    console.log(`📊 - Residents working 3 days: ${workDayStats[3]}`);
+    console.log(`📊 - Residents working 2 days: ${workDayStats[2]}`);
+    console.log(`📊 - Residents working 1 day: ${workDayStats[1]}`);
+    console.log(`📊 - Residents not working: ${workDayStats[0]}`);
 
-    // Create all assignments at once
+    // Create all assignments
     let actuallyCreated = 0;
     if (assignments.length > 0) {
       try {
@@ -1331,7 +1320,6 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
         console.error('💥 Error creating assignments:', error);
         
         // Fallback to individual creation
-        console.log('🔄 Falling back to individual creation...');
         for (const assignment of assignments) {
           try {
             await prisma.shiftAssignment.create({
@@ -1340,13 +1328,6 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
             actuallyCreated++;
           } catch (individualError: any) {
             console.error('💥 Individual assignment failed:', individualError.message);
-            conflicts.push({
-              residentId: assignment.residentId,
-              conflictDate: assignment.assignedDate,
-              conflictType: 'assignment_creation_failed',
-              description: `Failed to create assignment: ${individualError.message}`,
-              severity: 'error'
-            });
           }
         }
       }
@@ -1384,19 +1365,12 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       }
     });
 
-    const workDistribution = {
-      threeDay: Array.from(weeklyWorkCounts.values()).filter(count => count === 3).length,
-      twoDay: Array.from(weeklyWorkCounts.values()).filter(count => count === 2).length,
-      oneDay: Array.from(weeklyWorkCounts.values()).filter(count => count === 1).length,
-      noWork: residents.length - Array.from(weeklyWorkCounts.values()).filter(count => count > 0).length
-    };
-
     const finalStats = {
       assignmentsGenerated: assignments.length,
       assignmentsCreated: actuallyCreated,
       conflictsFound: conflicts.length,
       conflictsCreated: conflictsCreated,
-      workDistribution: workDistribution
+      workDistribution: workDayStats
     };
 
     console.log('📊 FINAL STATS:', finalStats);

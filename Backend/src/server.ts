@@ -969,6 +969,9 @@ app.post('/api/schedule-periods', async (req: any, res: any) => {
 });
 
 // SIMPLE FIX: Just track and reuse shelter run teams for the same day
+// Enhanced schedule generation logic with proper 3-day work limit
+// Replace the generate-schedule endpoint in your backend (around line 900)
+
 app.post('/api/generate-schedule', async (req: any, res: any) => {
   try {
     const { schedulePeriodId, startDate, endDate } = req.body;
@@ -977,7 +980,7 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       return res.status(400).json({ error: 'Schedule period ID, start date, and end date are required' });
     }
 
-    console.log('🔥 SCHEDULE GENERATION STARTED');
+    console.log('🔥 SCHEDULE GENERATION STARTED - WITH 3-DAY WORK LIMIT');
     console.log('Period:', schedulePeriodId, 'Dates:', startDate, 'to', endDate);
 
     // Clear existing assignments for this period
@@ -1053,24 +1056,23 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
     const assignments: any[] = [];
     const conflicts: any[] = [];
 
-    console.log(`📅 Processing ${dates.length} dates`);
+    // Track weekly work counts for each resident (KEY ENHANCEMENT)
+    const weeklyWorkCounts = new Map<number, number>();
+    residents.forEach(resident => {
+      weeklyWorkCounts.set(resident.id, 0);
+    });
+
+    console.log(`📅 Processing ${dates.length} dates with 3-day work limit`);
 
     // Process each date
     for (const date of dates) {
       const dayOfWeek = date.getDay();
       const dayUsed = new Set<number>(); 
-      // Track weekly work counts for each resident
-const weeklyWorkCounts = new Map<number, number>();
-
-// Initialize weekly counts for all residents
-residents.forEach(resident => {
-  weeklyWorkCounts.set(resident.id, 0);
-});
       const dateStr = date.toISOString().split('T')[0];
       
-      // SIMPLE FIX: Track consistent teams for this day
-      const shelterRunTeams: Record<string, number> = {}; // roleTitle -> residentId
-      const kitchenTeams: Record<string, number> = {}; // prep workers who also do janitor crew
+      // Track consistent teams for this day
+      const shelterRunTeams: Record<string, number> = {};
+      const kitchenTeams: Record<string, number> = {};
       
       console.log(`\n📆 Processing ${dateStr} (${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][dayOfWeek]})`);
       
@@ -1082,7 +1084,7 @@ residents.forEach(resident => {
 
       console.log(`  🔄 Found ${dayShifts.length} shifts for this day`);
 
-      // Process shifts by department priority (shelter runs will be processed first due to priority)
+      // Process shifts by department priority
       for (const shift of dayShifts) {
         console.log(`    🏢 Processing ${shift.department.name} - ${shift.name}`);
         
@@ -1094,12 +1096,11 @@ residents.forEach(resident => {
             
             let selectedResident = null;
             
-            // SIMPLE FIX: For shelter runs and kitchen teams, check if we already have someone assigned
+            // Check for existing team assignments (shelter runs, kitchen teams)
             if (shift.department.name === 'shelter_runs') {
-              const teamKey = `${role.roleTitle}_${i}`; // e.g., "driver_0", "driver_1", "assistant_0"
+              const teamKey = `${role.roleTitle}_${i}`;
               
               if (shelterRunTeams[teamKey]) {
-                // Reuse the same person from earlier shelter run
                 const existingResidentId = shelterRunTeams[teamKey];
                 selectedResident = residents.find(r => r.id === existingResidentId);
                 
@@ -1108,11 +1109,8 @@ residents.forEach(resident => {
                 }
               }
             }
-            
-            // KITCHEN TEAM CONSISTENCY: Prep workers also work as janitors
             else if (shift.department.name === 'kitchen') {
               if (role.roleTitle === 'janitor') {
-                // For janitor roles, try to use ANY prep team member (workers + lead)
                 const availablePrepMembers = Object.values(kitchenTeams);
                 if (availablePrepMembers.length > i && availablePrepMembers[i]) {
                   const existingResidentId = availablePrepMembers[i];
@@ -1125,138 +1123,130 @@ residents.forEach(resident => {
               }
             }
             
-          // If we don't have a team member assigned yet, find someone new
+            // If no existing team member, find someone new
             if (!selectedResident) {
               // Find eligible residents for this role
-              // Find this section in your schedule generation code (around line 900) and update it:
+              const eligibleResidents = residents.filter(resident => {
+                // Check if already assigned this day
+                if (dayUsed.has(resident.id)) return false;
 
-// Find eligible residents for this role
-const eligibleResidents = residents.filter(resident => {
-  // Check if already assigned this day
-  if (dayUsed.has(resident.id)) return false;
+                // Check for San Pedro only restriction
+                const hasPedroOnlyQualification = resident.qualifications.some(
+                  rq => rq.qualification.name === 'thrift_pedro_only'
+                );
+                
+                if (hasPedroOnlyQualification) {
+                  if (shift.department.name !== 'thrift_stores' || shift.name !== 'San Pedro Thrift Store') {
+                    console.log(`🚫 PEDRO ONLY: ${resident.firstName} ${resident.lastName} excluded from ${shift.department.name}-${shift.name} (Pedro-only worker)`);
+                    return false;
+                  }
+                }
 
-  // NEW: Check for San Pedro only restriction
-  const hasPedroOnlyQualification = resident.qualifications.some(
-    rq => rq.qualification.name === 'thrift_pedro_only'
-  );
-  
-  // If resident has Pedro-only qualification, only allow San Pedro thrift store
-  if (hasPedroOnlyQualification) {
-    if (shift.department.name !== 'thrift_stores' || shift.name !== 'San Pedro Thrift Store') {
-      console.log(`🚫 PEDRO ONLY: ${resident.firstName} ${resident.lastName} excluded from ${shift.department.name}-${shift.name} (Pedro-only worker)`);
-      return false;
-    }
-  }
+                // Check tenure requirement
+                if (shift.minTenureMonths > 0) {
+                  const admissionDate = new Date(resident.admissionDate);
+                  const monthsDiff = (date.getTime() - admissionDate.getTime()) / (1000 * 60 * 60 * 24 * 30.44);
+                  if (monthsDiff < shift.minTenureMonths) return false;
+                }
 
-  // Check tenure requirement
-  if (shift.minTenureMonths > 0) {
-    const admissionDate = new Date(resident.admissionDate);
-    const monthsDiff = (date.getTime() - admissionDate.getTime()) / (1000 * 60 * 60 * 24 * 30.44);
-    if (monthsDiff < shift.minTenureMonths) return false;
-  }
+                // Check qualification requirement
+                if (role.qualificationId) {
+                  const hasQualification = resident.qualifications.some(
+                    rq => rq.qualificationId === role.qualificationId
+                  );
+                  if (!hasQualification) return false;
+                }
 
-  // Check qualification requirement
-  if (role.qualificationId) {
-    const hasQualification = resident.qualifications.some(
-      rq => rq.qualificationId === role.qualificationId
-    );
-    if (!hasQualification) return false;
-  }
+                // Check availability
+                const dayAvailability = resident.availability.find(a => a.dayOfWeek === dayOfWeek);
+                if (dayAvailability) {
+                  const shiftStart = new Date(`2000-01-01T${shift.startTime}:00`);
+                  const shiftEnd = new Date(`2000-01-01T${shift.endTime}:00`);
+                  const availStart = new Date(`2000-01-01T${dayAvailability.startTime}:00`);
+                  const availEnd = new Date(`2000-01-01T${dayAvailability.endTime}:00`);
 
-  // Check availability
-  const dayAvailability = resident.availability.find(a => a.dayOfWeek === dayOfWeek);
-  if (dayAvailability) {
-    const shiftStart = new Date(`2000-01-01T${shift.startTime}:00`);
-    const shiftEnd = new Date(`2000-01-01T${shift.endTime}:00`);
-    const availStart = new Date(`2000-01-01T${dayAvailability.startTime}:00`);
-    const availEnd = new Date(`2000-01-01T${dayAvailability.endTime}:00`);
+                  if (shiftStart < availStart || shiftEnd > availEnd) return false;
+                }
 
-    if (shiftStart < availStart || shiftEnd > availEnd) return false;
-  }
+                // 🚨 ENHANCED: Check 3-day weekly work limit
+                const currentWeeklyCount = weeklyWorkCounts.get(resident.id) || 0;
+                if (currentWeeklyCount >= 3) {
+                  console.log(`🚫 3-DAY LIMIT: ${resident.firstName} ${resident.lastName} already worked ${currentWeeklyCount} days this week`);
+                  return false;
+                }
 
-  // Check weekly work limit (3 times maximum)
-  const currentWeeklyCount = weeklyWorkCounts.get(resident.id) || 0;
-  if (currentWeeklyCount >= 3) {
-    console.log(`🚫 WEEKLY LIMIT: ${resident.firstName} ${resident.lastName} already worked ${currentWeeklyCount} times this week`);
-    return false;
-  }
+                // Check appointment conflicts
+                const conflictingAppointments = resident.appointments.filter(apt => {
+                  const aptStart = new Date(apt.startDateTime);
+                  const aptEnd = new Date(apt.endDateTime);
+                  
+                  const aptDateStr = aptStart.toLocaleDateString('en-CA');
+                  const currentDateStr = date.toLocaleDateString('en-CA');
+                  
+                  if (aptDateStr !== currentDateStr) return false;
 
-  // Check appointment conflicts
-  const conflictingAppointments = resident.appointments.filter(apt => {
-    const aptStart = new Date(apt.startDateTime);
-    const aptEnd = new Date(apt.endDateTime);
-    
-    const aptDateStr = aptStart.toLocaleDateString('en-CA');
-    const currentDateStr = date.toLocaleDateString('en-CA');
-    
-    if (aptDateStr !== currentDateStr) return false;
+                  if (shift.blocksCounselingOnly && apt.appointmentType.name === 'counseling') return true;
+                  if (shift.blocksAllAppointments) return true;
+                  
+                  const shiftDate = new Date(date);
+                  const [shiftStartHour, shiftStartMin] = shift.startTime.split(':').map(Number);
+                  const [shiftEndHour, shiftEndMin] = shift.endTime.split(':').map(Number);
+                  
+                  const shiftStartTime = new Date(shiftDate);
+                  shiftStartTime.setHours(shiftStartHour, shiftStartMin, 0, 0);
+                  
+                  const shiftEndTime = new Date(shiftDate);
+                  shiftEndTime.setHours(shiftEndHour, shiftEndMin, 0, 0);
+                  
+                  const hasTimeOverlap = (aptStart < shiftEndTime && aptEnd > shiftStartTime);
+                  
+                  if (hasTimeOverlap) {
+                    console.log(`🚫 CONFLICT: ${resident.firstName} ${resident.lastName} excluded from ${shift.department.name}-${shift.name} due to ${apt.title} appointment`);
+                  }
+                  
+                  return hasTimeOverlap;
+                });
 
-    if (shift.blocksCounselingOnly && apt.appointmentType.name === 'counseling') return true;
-    if (shift.blocksAllAppointments) return true;
-    
-    const shiftDate = new Date(date);
-    const [shiftStartHour, shiftStartMin] = shift.startTime.split(':').map(Number);
-    const [shiftEndHour, shiftEndMin] = shift.endTime.split(':').map(Number);
-    
-    const shiftStartTime = new Date(shiftDate);
-    shiftStartTime.setHours(shiftStartHour, shiftStartMin, 0, 0);
-    
-    const shiftEndTime = new Date(shiftDate);
-    shiftEndTime.setHours(shiftEndHour, shiftEndMin, 0, 0);
-    
-    const hasTimeOverlap = (aptStart < shiftEndTime && aptEnd > shiftStartTime);
-    
-    if (hasTimeOverlap) {
-      console.log(`🚫 CONFLICT: ${resident.firstName} ${resident.lastName} excluded from ${shift.department.name}-${shift.name} due to ${apt.title} appointment`);
-    }
-    
-    return hasTimeOverlap;
-  });
+                // Exclude residents with appointments on the same day
+                if (resident.appointments.some(apt => {
+                  const aptDateStr = new Date(apt.startDateTime).toLocaleDateString('en-CA');
+                  const currentDateStr = date.toLocaleDateString('en-CA');
+                  return aptDateStr === currentDateStr;
+                })) {
+                  console.log(`🚫 APPOINTMENT: Excluding ${resident.firstName} ${resident.lastName} - has appointment on ${date.toLocaleDateString('en-CA')}`);
+                  return false;
+                }
 
-  // TEMPORARY: Force exclude residents with ANY appointments on the same day
-  if (resident.appointments.some(apt => {
-    const aptDateStr = new Date(apt.startDateTime).toLocaleDateString('en-CA');
-    const currentDateStr = date.toLocaleDateString('en-CA');
-    return aptDateStr === currentDateStr;
-  })) {
-    console.log(`🚫 TEMP: Excluding ${resident.firstName} ${resident.lastName} - has appointment on ${date.toLocaleDateString('en-CA')}`);
-    return false; // Exclude this resident
-  }
-
-  // Return false if there are conflicts (excludes resident from eligibility)
-  return conflictingAppointments.length === 0;
-});
-// ========== END OF FIXED LOGIC ==========
+                return conflictingAppointments.length === 0;
+              });
 
               console.log(`          👥 Found ${eligibleResidents.length} eligible residents`);
 
               if (eligibleResidents.length > 0) {
-                // Load balancing - prefer residents with fewer assignments
-              const sortedCandidates = eligibleResidents.sort((a, b) => {
-  // First priority: weekly work count (fewer is better)
-  const aWeeklyCount = weeklyWorkCounts.get(a.id) || 0;
-  const bWeeklyCount = weeklyWorkCounts.get(b.id) || 0;
-  
-  if (aWeeklyCount !== bWeeklyCount) {
-    return aWeeklyCount - bWeeklyCount;
-  }
-  
-  // Second priority: current assignments in this generation
-  const aAssignments = assignments.filter(assign => assign.residentId === a.id).length;
-  const bAssignments = assignments.filter(assign => assign.residentId === b.id).length;
-  return aAssignments - bAssignments;
-});
+                // Load balancing - prefer residents with fewer work days
+                const sortedCandidates = eligibleResidents.sort((a, b) => {
+                  // First priority: weekly work count (fewer is better)
+                  const aWeeklyCount = weeklyWorkCounts.get(a.id) || 0;
+                  const bWeeklyCount = weeklyWorkCounts.get(b.id) || 0;
+                  
+                  if (aWeeklyCount !== bWeeklyCount) {
+                    return aWeeklyCount - bWeeklyCount;
+                  }
+                  
+                  // Second priority: current assignments in this generation
+                  const aAssignments = assignments.filter(assign => assign.residentId === a.id).length;
+                  const bAssignments = assignments.filter(assign => assign.residentId === b.id).length;
+                  return aAssignments - bAssignments;
+                });
 
                 selectedResident = sortedCandidates[0];
                 
-                // SIMPLE FIX: Remember team members for consistency
+                // Remember team members for consistency
                 if (shift.department.name === 'shelter_runs') {
                   const teamKey = `${role.roleTitle}_${i}`;
                   shelterRunTeams[teamKey] = selectedResident.id;
                   console.log(`        📝 Registered shelter run team: ${teamKey} = ${selectedResident.firstName}`);
                 }
-                
-                // KITCHEN TEAM CONSISTENCY: Remember ALL prep team members for janitor duty
                 else if (shift.department.name === 'kitchen' && (role.roleTitle === 'prep_worker' || role.roleTitle === 'prep_lead')) {
                   const teamKey = `${role.roleTitle}_${i}`;
                   kitchenTeams[teamKey] = selectedResident.id;
@@ -1278,13 +1268,12 @@ const eligibleResidents = residents.filter(resident => {
               
               assignments.push(assignment);
 
-              // Update weekly work count
-const currentCount = weeklyWorkCounts.get(selectedResident.id) || 0;
-weeklyWorkCounts.set(selectedResident.id, currentCount + 1);
-console.log(`📊 WORK COUNT: ${selectedResident.firstName} ${selectedResident.lastName} now has ${currentCount + 1} assignments this week`);
+              // 🚨 ENHANCED: Update weekly work count
+              const currentCount = weeklyWorkCounts.get(selectedResident.id) || 0;
+              weeklyWorkCounts.set(selectedResident.id, currentCount + 1);
+              console.log(`📊 WORK COUNT: ${selectedResident.firstName} ${selectedResident.lastName} now has ${currentCount + 1} work days this week`);
               
               // Only mark as dayUsed if this is their first assignment of the day
-              // (shelter run people can work multiple shelter runs, prep workers can also do janitor)
               const isReusedTeamMember = (
                 (shift.department.name === 'shelter_runs' && Object.values(shelterRunTeams).includes(selectedResident.id)) ||
                 (shift.department.name === 'kitchen' && role.roleTitle === 'janitor' && Object.values(kitchenTeams).includes(selectedResident.id))
@@ -1301,7 +1290,7 @@ console.log(`📊 WORK COUNT: ${selectedResident.firstName} ${selectedResident.l
                 residentId: 0,
                 conflictDate: date,
                 conflictType: 'no_eligible_residents',
-                description: `No eligible residents for ${shift.department.name} - ${shift.name} - ${role.roleTitle} (slot ${i + 1}/${role.requiredCount})`,
+                description: `No eligible residents for ${shift.department.name} - ${shift.name} - ${role.roleTitle} (slot ${i + 1}/${role.requiredCount}). May be due to 3-day work limit, qualifications, or appointments.`,
                 severity: 'error'
               };
               
@@ -1313,9 +1302,21 @@ console.log(`📊 WORK COUNT: ${selectedResident.firstName} ${selectedResident.l
       }
     }
 
+    // Log final work distribution
+    console.log(`\n📊 FINAL WORK DISTRIBUTION:`);
+    weeklyWorkCounts.forEach((count, residentId) => {
+      if (count > 0) {
+        const resident = residents.find(r => r.id === residentId);
+        console.log(`📊 - ${resident?.firstName} ${resident?.lastName}: ${count} work days`);
+      }
+    });
+
     console.log(`\n📊 GENERATION COMPLETE:`);
     console.log(`📊 - Generated ${assignments.length} assignments`);
     console.log(`📊 - Found ${conflicts.length} conflicts`);
+    console.log(`📊 - Residents working 3 days: ${Array.from(weeklyWorkCounts.values()).filter(count => count === 3).length}`);
+    console.log(`📊 - Residents working 2 days: ${Array.from(weeklyWorkCounts.values()).filter(count => count === 2).length}`);
+    console.log(`📊 - Residents working 1 day: ${Array.from(weeklyWorkCounts.values()).filter(count => count === 1).length}`);
 
     // Create all assignments at once
     let actuallyCreated = 0;
@@ -1366,7 +1367,7 @@ console.log(`📊 WORK COUNT: ${selectedResident.firstName} ${selectedResident.l
       }
     }
 
-    // Return results
+    // Return results with work distribution stats
     const period = await prisma.schedulePeriod.findUnique({
       where: { id: parseInt(schedulePeriodId) },
       include: {
@@ -1383,11 +1384,19 @@ console.log(`📊 WORK COUNT: ${selectedResident.firstName} ${selectedResident.l
       }
     });
 
+    const workDistribution = {
+      threeDay: Array.from(weeklyWorkCounts.values()).filter(count => count === 3).length,
+      twoDay: Array.from(weeklyWorkCounts.values()).filter(count => count === 2).length,
+      oneDay: Array.from(weeklyWorkCounts.values()).filter(count => count === 1).length,
+      noWork: residents.length - Array.from(weeklyWorkCounts.values()).filter(count => count > 0).length
+    };
+
     const finalStats = {
       assignmentsGenerated: assignments.length,
       assignmentsCreated: actuallyCreated,
       conflictsFound: conflicts.length,
-      conflictsCreated: conflictsCreated
+      conflictsCreated: conflictsCreated,
+      workDistribution: workDistribution
     };
 
     console.log('📊 FINAL STATS:', finalStats);
@@ -2203,6 +2212,323 @@ app.delete('/api/appointments/:id', async (req: any, res: any) => {
         details: error.message 
       });
     }
+  }
+});
+
+// Add these routes to your backend server file (paste-3.txt)
+// Add them after your existing routes, before the error handling middleware
+
+// Work Limits routes
+app.get('/api/work-limits', async (req: any, res: any) => {
+  try {
+    const workLimits = await prisma.workLimit.findMany({
+      where: { isActive: true },
+      include: {
+        resident: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true
+          }
+        }
+      },
+      orderBy: [
+        { residentId: 'asc' }, // Global limits first (null values)
+        { limitType: 'asc' }
+      ]
+    });
+    res.json(workLimits);
+  } catch (error: any) {
+    console.error('Error fetching work limits:', error);
+    res.status(500).json({ error: 'Failed to fetch work limits' });
+  }
+});
+
+app.post('/api/work-limits', async (req: any, res: any) => {
+  try {
+    const { residentId, limitType, maxValue, reason } = req.body;
+    
+    if (!limitType || !maxValue) {
+      return res.status(400).json({ error: 'Limit type and max value are required' });
+    }
+
+    if (maxValue < 1 || maxValue > 7) {
+      return res.status(400).json({ error: 'Max value must be between 1 and 7' });
+    }
+
+    // Check if a similar limit already exists
+    const existingLimit = await prisma.workLimit.findFirst({
+      where: {
+        residentId: residentId || null,
+        limitType: limitType,
+        isActive: true
+      }
+    });
+
+    if (existingLimit) {
+      return res.status(400).json({ 
+        error: `A ${limitType} limit already exists for this ${residentId ? 'resident' : 'global setting'}` 
+      });
+    }
+
+    const workLimit = await prisma.workLimit.create({
+      data: {
+        residentId: residentId || null,
+        limitType: limitType,
+        maxValue: maxValue,
+        reason: reason?.trim() || null
+      },
+      include: {
+        resident: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true
+          }
+        }
+      }
+    });
+    
+    res.status(201).json(workLimit);
+  } catch (error: any) {
+    console.error('Error creating work limit:', error);
+    res.status(500).json({ error: 'Failed to create work limit' });
+  }
+});
+
+// Replace your existing PUT route with this fixed version:
+
+app.put('/api/work-limits/:id', async (req: any, res: any) => {
+  try {
+    const { id } = req.params;
+    const { residentId, limitType, maxValue, reason } = req.body;
+    
+    if (!limitType || !maxValue) {
+      return res.status(400).json({ error: 'Limit type and max value are required' });
+    }
+
+    if (maxValue < 1 || maxValue > 7) {
+      return res.status(400).json({ error: 'Max value must be between 1 and 7' });
+    }
+
+    // ADD THIS DUPLICATE CHECK (this was missing from your version):
+    const existingLimit = await prisma.workLimit.findFirst({
+      where: {
+        id: { not: parseInt(id) },
+        residentId: residentId || null,
+        limitType: limitType,
+        isActive: true
+      }
+    });
+
+    if (existingLimit) {
+      return res.status(400).json({ 
+        error: `A ${limitType} limit already exists for this ${residentId ? 'resident' : 'global setting'}` 
+      });
+    }
+    // END OF ADDED DUPLICATE CHECK
+
+    const workLimit = await prisma.workLimit.update({
+      where: { id: parseInt(id) },
+      data: {
+        residentId: residentId || null,
+        limitType: limitType,
+        maxValue: maxValue,
+        reason: reason?.trim() || null
+      },
+      include: {
+        resident: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true
+          }
+        }
+      }
+    });
+    
+    res.json(workLimit);
+  } catch (error: any) {
+    console.error('Error updating work limit:', error);
+    if (error.code === 'P2025') {
+      res.status(404).json({ error: 'Work limit not found' });
+    } else {
+      res.status(500).json({ error: 'Failed to update work limit' });
+    }
+  }
+});
+
+app.delete('/api/work-limits/:id', async (req: any, res: any) => {
+  try {
+    const { id } = req.params;
+    
+    const workLimit = await prisma.workLimit.update({
+      where: { id: parseInt(id) },
+      data: { isActive: false }
+    });
+    
+    res.json({ message: 'Work limit deleted successfully', workLimit });
+  } catch (error: any) {
+    console.error('Error deleting work limit:', error);
+    if (error.code === 'P2025') {
+      res.status(404).json({ error: 'Work limit not found' });
+    } else {
+      res.status(500).json({ error: 'Failed to delete work limit' });
+    }
+  }
+});
+
+// Add these additional routes after the ones you already added
+
+// Helper function to get work limits for a resident
+app.get('/api/residents/:id/work-limits', async (req: any, res: any) => {
+  try {
+    const { id } = req.params;
+    
+    // Get individual limits for this resident
+    const individualLimits = await prisma.workLimit.findMany({
+      where: { 
+        residentId: parseInt(id),
+        isActive: true 
+      }
+    });
+    
+    // Get global limits (where residentId is null)
+    const globalLimits = await prisma.workLimit.findMany({
+      where: { 
+        residentId: null,
+        isActive: true 
+      }
+    });
+    
+    // Combine and prioritize individual limits over global ones
+    const effectiveLimits = [...individualLimits];
+    
+    // Add global limits only if no individual limit exists for that type
+    globalLimits.forEach(globalLimit => {
+      const hasIndividualLimit = individualLimits.some(
+        individualLimit => individualLimit.limitType === globalLimit.limitType
+      );
+      
+      if (!hasIndividualLimit) {
+        effectiveLimits.push(globalLimit);
+      }
+    });
+    
+    res.json({
+      individualLimits,
+      globalLimits,
+      effectiveLimits
+    });
+  } catch (error: any) {
+    console.error('Error fetching resident work limits:', error);
+    res.status(500).json({ error: 'Failed to fetch resident work limits' });
+  }
+});
+
+// Get work limit statistics
+app.get('/api/work-limits/stats', async (req: any, res: any) => {
+  try {
+    const totalLimits = await prisma.workLimit.count({
+      where: { isActive: true }
+    });
+    
+    const globalLimits = await prisma.workLimit.count({
+      where: { 
+        residentId: null,
+        isActive: true 
+      }
+    });
+    
+    const individualLimits = await prisma.workLimit.count({
+      where: { 
+        residentId: { not: null },
+        isActive: true 
+      }
+    });
+    
+    const limitsByType = await prisma.workLimit.groupBy({
+      by: ['limitType'],
+      where: { isActive: true },
+      _count: true
+    });
+    
+    res.json({
+      totalLimits,
+      globalLimits,
+      individualLimits,
+      limitsByType
+    });
+  } catch (error: any) {
+    console.error('Error fetching work limit stats:', error);
+    res.status(500).json({ error: 'Failed to fetch work limit stats' });
+  }
+});
+
+// Enhanced function to check work limits during scheduling
+async function checkWorkLimits(residentId: number, limitType: string, currentValue: number): Promise<boolean> {
+  try {
+    // Get individual limit first
+    const individualLimit = await prisma.workLimit.findFirst({
+      where: {
+        residentId: residentId,
+        limitType: limitType,
+        isActive: true
+      }
+    });
+    
+    if (individualLimit) {
+      return currentValue < individualLimit.maxValue;
+    }
+    
+    // Check global limit if no individual limit exists
+    const globalLimit = await prisma.workLimit.findFirst({
+      where: {
+        residentId: null,
+        limitType: limitType,
+        isActive: true
+      }
+    });
+    
+    if (globalLimit) {
+      return currentValue < globalLimit.maxValue;
+    }
+    
+    // Default fallback limits if no limits are set
+    const defaultLimits: Record<string, number> = {
+      'weekly_days': 3,
+      'daily_hours': 8,
+      'monthly_days': 15
+    };
+    
+    return currentValue < (defaultLimits[limitType] || 3);
+  } catch (error) {
+    console.error('Error checking work limits:', error);
+    // Default to 3-day limit if error occurs
+    return currentValue < 3;
+  }
+}
+
+// Validation endpoint to check if a work assignment would violate limits
+app.post('/api/work-limits/validate', async (req: any, res: any) => {
+  try {
+    const { residentId, limitType, currentValue } = req.body;
+    
+    if (!residentId || !limitType || currentValue === undefined) {
+      return res.status(400).json({ error: 'Resident ID, limit type, and current value are required' });
+    }
+    
+    const isValid = await checkWorkLimits(residentId, limitType, currentValue);
+    
+    res.json({
+      isValid,
+      currentValue,
+      limitType,
+      residentId
+    });
+  } catch (error: any) {
+    console.error('Error validating work limits:', error);
+    res.status(500).json({ error: 'Failed to validate work limits' });
   }
 });
 

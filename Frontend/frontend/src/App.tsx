@@ -7,8 +7,9 @@ import QualificationsManagement from './components/QualificationsManagement';
 import ShiftsManagement from './components/ShiftsManagement';
 import AppointmentsManagement from './components/AppointmentsManagement';
 import ScheduleManagement from './components/ScheduleManagement';
+import WorkLimitsManagement from './components/WorkLimitsManagement';
 
-type TabType = 'residents' | 'qualifications' | 'shifts' | 'appointments' | 'schedule';
+type TabType = 'residents' | 'qualifications' | 'shifts' | 'appointments' | 'schedule' | 'work-limits';
 
 const MainApp: React.FC = () => {
   const { user, logout, requiresSetup, loading } = useAuth();
@@ -18,6 +19,7 @@ const MainApp: React.FC = () => {
     { id: 'residents' as TabType, name: 'Residents', description: 'Manage resident information' },
     { id: 'qualifications' as TabType, name: 'Qualifications', description: 'Assign work qualifications' },
     { id: 'shifts' as TabType, name: 'Shifts', description: 'Configure work shifts' },
+    { id: 'work-limits' as TabType, name: 'Work Limits', description: 'Set work limits & restrictions' },
     { id: 'appointments' as TabType, name: 'Appointments', description: 'Schedule counseling & appointments' },
     { id: 'schedule' as TabType, name: 'Schedule', description: 'Generate work schedules' },
   ];
@@ -30,6 +32,8 @@ const MainApp: React.FC = () => {
         return <QualificationsManagement />;
       case 'shifts':
         return <ShiftsManagement />;
+      case 'work-limits':
+        return <WorkLimitsManagement />;
       case 'appointments':
         return <AppointmentsManagement />;
       case 'schedule':
@@ -95,12 +99,12 @@ const MainApp: React.FC = () => {
       {/* Navigation Tabs */}
       <nav className="bg-white border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex space-x-8">
+          <div className="flex space-x-8 overflow-x-auto">
             {tabs.map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
+                className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors whitespace-nowrap ${
                   activeTab === tab.id
                     ? 'border-blue-500 text-blue-600'
                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
@@ -128,7 +132,14 @@ const MainApp: React.FC = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex justify-between items-center text-sm text-gray-500">
             <p>© 2025 Beacon House Treatment Center</p>
-            <p>Scheduling System v1.0</p>
+            <div className="flex items-center space-x-4">
+              <p>Scheduling System v1.0</p>
+              {activeTab === 'work-limits' && (
+                <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-xs font-medium">
+                  3-Day Work Limit Active
+                </span>
+              )}
+            </div>
           </div>
         </div>
       </footer>

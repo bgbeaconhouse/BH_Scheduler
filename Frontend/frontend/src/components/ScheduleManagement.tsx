@@ -248,6 +248,8 @@ const ScheduleManagement: React.FC = () => {
 
 // Reverted createCalendarSheet function - back to original version
 
+// Reverted createCalendarSheet function - back to original version
+
 const createCalendarSheet = async (workbook: any) => {
   const dates = getWeekDates(selectedPeriod!.startDate, selectedPeriod!.endDate);
   const calendarData: any[][] = [];
@@ -330,6 +332,9 @@ const createCalendarSheet = async (workbook: any) => {
 
   let currentDept = '';
   
+  // Special handling for shelter runs to interleave drivers and assistants
+  const processedShifts = new Set<string>();
+  
   // Create rows for each shift+role combination
   sortedCombinations.forEach(combination => {
     const [deptName, shiftName, timeSlot, roleTitle] = combination.split('|');
@@ -341,6 +346,124 @@ const createCalendarSheet = async (workbook: any) => {
       calendarData.push([deptDisplayName]);
     }
     
+    // Special handling for shelter runs to interleave drivers and assistants
+    if (deptName === 'shelter_runs' && shiftName === 'Shelter Run Morning') {
+      const shiftKey = `${deptName}|${shiftName}|${timeSlot}`;
+      
+      // Only process each shelter run shift once
+      if (!processedShifts.has(shiftKey)) {
+        processedShifts.add(shiftKey);
+        
+        // Get all driver and assistant assignments for this shift
+        const driverAssignments = assignments.filter((a: any) => 
+          a.shift?.department?.name === deptName &&
+          a.shift?.name === shiftName &&
+          `${a.shift?.startTime}-${a.shift?.endTime}` === timeSlot &&
+          a.roleTitle === 'driver'
+        );
+        
+        const assistantAssignments = assignments.filter((a: any) => 
+          a.shift?.department?.name === deptName &&
+          a.shift?.name === shiftName &&
+          `${a.shift?.startTime}-${a.shift?.endTime}` === timeSlot &&
+          a.roleTitle === 'assistant'
+        );
+        
+        // Find the maximum number of teams needed
+        let maxTeams = 0;
+        dates.forEach(date => {
+          const dateStr = date.toISOString().split('T')[0];
+          const dayDrivers = driverAssignments.filter((a: any) => 
+            a.assignedDate && a.assignedDate.split('T')[0] === dateStr
+          );
+          const dayAssistants = assistantAssignments.filter((a: any) => 
+            a.assignedDate && a.assignedDate.split('T')[0] === dateStr
+          );
+          const teamsThisDay = Math.max(dayDrivers.length, dayAssistants.length);
+          if (teamsThisDay > maxTeams) {
+            maxTeams = teamsThisDay;
+          }
+        });
+        
+        // Create alternating driver/assistant rows
+        for (let teamIndex = 0; teamIndex < maxTeams; teamIndex++) {
+          // Driver row
+          const driverRow: any[] = [];
+          if (teamIndex === 0) {
+            driverRow.push('Shelter Run - driver');
+          } else {
+            driverRow.push('');
+          }
+          
+          dates.forEach(date => {
+            const dateStr = date.toISOString().split('T')[0];
+            const dayDrivers = driverAssignments.filter((a: any) => 
+              a.assignedDate && a.assignedDate.split('T')[0] === dateStr
+            );
+            
+            dayDrivers.sort((a: any, b: any) => {
+              const aName = `${a.resident?.firstName || ''} ${a.resident?.lastName || ''}`;
+              const bName = `${b.resident?.firstName || ''} ${b.resident?.lastName || ''}`;
+              return aName.localeCompare(bName);
+            });
+            
+            if (teamIndex < dayDrivers.length) {
+              const assignment = dayDrivers[teamIndex];
+              const resident = assignment?.resident;
+              if (resident && resident.firstName && resident.lastName) {
+                driverRow.push(`${resident.firstName} ${resident.lastName}`);
+              } else {
+                driverRow.push('');
+              }
+            } else {
+              driverRow.push('');
+            }
+          });
+          
+          calendarData.push(driverRow);
+          
+          // Assistant row
+          const assistantRow: any[] = [];
+          if (teamIndex === 0) {
+            assistantRow.push('Shelter Run - assistant');
+          } else {
+            assistantRow.push('');
+          }
+          
+          dates.forEach(date => {
+            const dateStr = date.toISOString().split('T')[0];
+            const dayAssistants = assistantAssignments.filter((a: any) => 
+              a.assignedDate && a.assignedDate.split('T')[0] === dateStr
+            );
+            
+            dayAssistants.sort((a: any, b: any) => {
+              const aName = `${a.resident?.firstName || ''} ${a.resident?.lastName || ''}`;
+              const bName = `${b.resident?.firstName || ''} ${b.resident?.lastName || ''}`;
+              return aName.localeCompare(bName);
+            });
+            
+            if (teamIndex < dayAssistants.length) {
+              const assignment = dayAssistants[teamIndex];
+              const resident = assignment?.resident;
+              if (resident && resident.firstName && resident.lastName) {
+                assistantRow.push(`${resident.firstName} ${resident.lastName}`);
+              } else {
+                assistantRow.push('');
+              }
+            } else {
+              assistantRow.push('');
+            }
+          });
+          
+          calendarData.push(assistantRow);
+        }
+      }
+      
+      // Skip processing this combination individually since we handled it above
+      return;
+    }
+    
+    // Handle all other roles normally
     const roleDisplay = roleTitle.replace('_', ' ');
     
     // Get all assignments for this specific combination (excluding midday and evening shelter runs)

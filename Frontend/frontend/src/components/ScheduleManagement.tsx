@@ -246,54 +246,134 @@ const ScheduleManagement: React.FC = () => {
     }
   };
 
-  const createCalendarSheet = async (workbook: any) => {
-    const dates = getWeekDates(selectedPeriod!.startDate, selectedPeriod!.endDate);
-    const calendarData = [];
+const createCalendarSheet = async (workbook: any) => {
+  const dates = getWeekDates(selectedPeriod!.startDate, selectedPeriod!.endDate);
+  const calendarData: any[][] = [];
 
-    // Header row
-    const headerRow = ['Time', ...dates.map(date => date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }))];
-    calendarData.push(headerRow);
+  // Create title row
+  const periodName = selectedPeriod!.name;
+  calendarData.push([periodName]);
+  calendarData.push([]); // Empty row for spacing
 
-    // Get all unique time slots
-    const timeSlots = [...new Set(assignments.map(a => `${a.shift.startTime}-${a.shift.endTime}`))].sort();
+  // Create date header row
+  const dateHeaderRow: any[] = [''];
+  dates.forEach(date => {
+    const dayName = date.toLocaleDateString('en-US', { weekday: 'short' });
+    const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    dateHeaderRow.push(`${dayName}, ${dateStr}`);
+  });
+  calendarData.push(dateHeaderRow);
 
-    // Create rows for each time slot
-    timeSlots.forEach(timeSlot => {
-      const row = [formatTimeRange(timeSlot)];
+  // Group assignments by department and time
+  const departments = [...new Set(assignments.map((a: any) => a.shift.department.name))];
+  const departmentPriority: { [key: string]: number } = { 
+    'kitchen': 4, 
+    'shelter_runs': 3, 
+    'thrift_stores': 2, 
+    'maintenance': 1 
+  };
+  
+  departments.sort((a: any, b: any) => (departmentPriority[b] || 0) - (departmentPriority[a] || 0));
+
+  departments.forEach((deptName: any) => {
+    // Add department header
+    const deptDisplayName = deptName.replace('_', ' ').toUpperCase();
+    calendarData.push([deptDisplayName]);
+
+    // Get unique time slots for this department
+    const deptAssignments = assignments.filter((a: any) => a.shift.department.name === deptName);
+    const timeSlots = [...new Set(deptAssignments.map((a: any) => `${a.shift.startTime}-${a.shift.endTime}`))].sort();
+
+    timeSlots.forEach((timeSlot: any) => {
+      // Group by shift name within this time slot
+      const timeAssignments = deptAssignments.filter((a: any) => 
+        `${a.shift.startTime}-${a.shift.endTime}` === timeSlot
+      );
       
-      dates.forEach(date => {
-        const dateStr = date.toISOString().split('T')[0];
-        const dayAssignments = assignments.filter(a => 
-          a.assignedDate.split('T')[0] === dateStr && 
-          `${a.shift.startTime}-${a.shift.endTime}` === timeSlot
-        );
+      const shiftGroups = groupBy(timeAssignments, 'shift.name');
+      
+      Object.entries(shiftGroups).forEach(([shiftName, shiftAssignments]: [string, any]) => {
+        const [startTime, endTime] = timeSlot.split('-');
+        const timeDisplay = `${formatTime(startTime)} - ${formatTime(endTime)}`;
         
-        if (dayAssignments.length > 0) {
-          const assignmentText = dayAssignments.map(a => 
-            `${a.shift.department.name.toUpperCase()}: ${a.shift.name} - ${a.resident.firstName} ${a.resident.lastName} (${a.roleTitle})`
-          ).join('\n');
-          row.push(assignmentText);
-        } else {
-          row.push('');
-        }
+        const row: any[] = [`${shiftName}\n${timeDisplay}`];
+        
+        // For each date, collect assignments
+        dates.forEach(date => {
+          const dateStr = date.toISOString().split('T')[0];
+          const dayAssignments = (shiftAssignments as any[]).filter((a: any) => 
+            a.assignedDate.split('T')[0] === dateStr
+          );
+          
+          if (dayAssignments.length === 0) {
+            row.push('');
+          } else {
+            // Group by role and format nicely
+            const roleGroups: { [key: string]: any[] } = {};
+            dayAssignments.forEach((assignment: any) => {
+              if (!roleGroups[assignment.roleTitle]) {
+                roleGroups[assignment.roleTitle] = [];
+              }
+              roleGroups[assignment.roleTitle].push(assignment.resident);
+            });
+            
+            const cellContent = Object.entries(roleGroups).map(([role, residents]: [string, any[]]) => {
+              const roleDisplay = role.replace('_', ' ');
+              if (residents.length === 1) {
+                const resident = residents[0];
+                return role === 'manager' || role === 'driver' || role === 'prep_lead' || role === 'kitchen_helper'
+                  ? `${resident.firstName} ${resident.lastName} (${roleDisplay})`
+                  : `${resident.firstName} ${resident.lastName}`;
+              } else {
+                return residents.map((resident: any) => {
+                  return role === 'manager' || role === 'driver' || role === 'prep_lead' || role === 'kitchen_helper'
+                    ? `${resident.firstName} ${resident.lastName} (${roleDisplay})`
+                    : `${resident.firstName} ${resident.lastName}`;
+                }).join('\n');
+              }
+            }).join('\n');
+            
+            row.push(cellContent);
+          }
+        });
+        
+        calendarData.push(row);
       });
-      
-      calendarData.push(row);
     });
 
-    const calendarSheet = XLSX.utils.aoa_to_sheet(calendarData);
-    
-    // Set column widths
-    calendarSheet['!cols'] = [
-      { wch: 15 }, // Time column
-      ...dates.map(() => ({ wch: 25 })) // Date columns
-    ];
+    // Add empty row between departments
+    calendarData.push([]);
+  });
 
-    // Set row heights for multi-line content
-    calendarSheet['!rows'] = calendarData.map(() => ({ hpt: 60 }));
+  const calendarSheet = XLSX.utils.aoa_to_sheet(calendarData);
+  
+  // Set column widths
+  calendarSheet['!cols'] = [
+    { wch: 25 }, // Time/shift column
+    ...dates.map(() => ({ wch: 30 })) // Date columns
+  ];
 
-    XLSX.utils.book_append_sheet(workbook, calendarSheet, 'Calendar View');
-  };
+  // Set row heights for multi-line content
+  calendarSheet['!rows'] = calendarData.map((row: any[], index: number) => {
+    if (index === 0) return { hpt: 20 }; // Title row
+    if (row[0] && typeof row[0] === 'string' && (row[0].includes('KITCHEN') || row[0].includes('SHELTER') || row[0].includes('THRIFT') || row[0].includes('MAINTENANCE'))) {
+      return { hpt: 25 }; // Department headers
+    }
+    return { hpt: 80 }; // Data rows with multiple names
+  });
+
+  XLSX.utils.book_append_sheet(workbook, calendarSheet, 'Weekly Schedule');
+};
+
+// Helper function to group assignments
+const groupBy = (array: any[], key: string): { [key: string]: any[] } => {
+  return array.reduce((result: { [key: string]: any[] }, item: any) => {
+    const group = key.split('.').reduce((obj: any, k: string) => obj && obj[k], item);
+    if (!result[group]) result[group] = [];
+    result[group].push(item);
+    return result;
+  }, {});
+};
 
   const createAssignmentsSheet = async (workbook: any) => {
     const assignmentsData = [
@@ -439,10 +519,10 @@ const ScheduleManagement: React.FC = () => {
     XLSX.utils.book_append_sheet(workbook, summarySheet, 'Summary');
   };
 
-  const formatTimeRange = (timeSlot: string) => {
-    const [start, end] = timeSlot.split('-');
-    return `${formatTime(start)} - ${formatTime(end)}`;
-  };
+  // const formatTimeRange = (timeSlot: string) => {
+  //   const [start, end] = timeSlot.split('-');
+  //   return `${formatTime(start)} - ${formatTime(end)}`;
+  // };
 
   const getWeekDates = (startDate: string, endDate: string) => {
     const start = new Date(startDate);

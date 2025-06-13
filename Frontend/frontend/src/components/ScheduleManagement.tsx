@@ -269,6 +269,11 @@ const createCalendarSheet = async (workbook: any) => {
   
   assignments.forEach((assignment: any) => {
     if (assignment.shift && assignment.shift.department) {
+      // Skip shelter run midday and evening shifts
+      if (assignment.shift.name === 'Shelter Run Midday' || assignment.shift.name === 'Shelter Run Evening') {
+        return;
+      }
+      
       const key = `${assignment.shift.department.name}|${assignment.shift.name}|${assignment.shift.startTime}-${assignment.shift.endTime}|${assignment.roleTitle}`;
       allShiftCombinations.add(key);
     }
@@ -336,12 +341,14 @@ const createCalendarSheet = async (workbook: any) => {
     
     const roleDisplay = roleTitle.replace('_', ' ');
     
-    // Get all assignments for this specific combination
+    // Get all assignments for this specific combination (excluding midday and evening shelter runs)
     const combinationAssignments = assignments.filter((a: any) => 
       a.shift?.department?.name === deptName &&
       a.shift?.name === shiftName &&
       `${a.shift?.startTime}-${a.shift?.endTime}` === timeSlot &&
-      a.roleTitle === roleTitle
+      a.roleTitle === roleTitle &&
+      a.shift?.name !== 'Shelter Run Midday' &&
+      a.shift?.name !== 'Shelter Run Evening'
     );
 
     // Find the maximum number of people with this role on any single day
@@ -362,10 +369,16 @@ const createCalendarSheet = async (workbook: any) => {
       
       // First column: shift info (only show on first row of each role)
       if (personIndex === 0) {
+        // Clean up shift name for display
+        let displayShiftName = shiftName;
+        if (shiftName === 'Shelter Run Morning') {
+          displayShiftName = 'Shelter Run';
+        }
+        
         if (roleTitle === 'manager' || roleTitle === 'driver' || roleTitle === 'prep_lead' || roleTitle === 'kitchen_helper') {
-          row.push(`${shiftName} - ${roleDisplay}`);
+          row.push(`${displayShiftName} - ${roleDisplay}`);
         } else {
-          row.push(`${shiftName}`);
+          row.push(`${displayShiftName}`);
         }
       } else {
         row.push(''); // Empty for subsequent rows

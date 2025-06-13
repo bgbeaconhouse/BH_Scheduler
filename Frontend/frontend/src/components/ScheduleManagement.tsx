@@ -246,6 +246,8 @@ const ScheduleManagement: React.FC = () => {
     }
   };
 
+// Replace the createCalendarSheet function in your ScheduleManagement.tsx with this updated version
+
 const createCalendarSheet = async (workbook: any) => {
   const dates = getWeekDates(selectedPeriod!.startDate, selectedPeriod!.endDate);
   const calendarData: any[][] = [];
@@ -264,7 +266,7 @@ const createCalendarSheet = async (workbook: any) => {
   });
   calendarData.push(dateHeaderRow);
 
-  // Create a comprehensive list of all unique shift+time+role combinations
+  // Create a comprehensive list of all unique shift+time combinations
   const allShiftCombinations = new Set<string>();
   
   assignments.forEach((assignment: any) => {
@@ -274,8 +276,14 @@ const createCalendarSheet = async (workbook: any) => {
         return;
       }
       
-      const key = `${assignment.shift.department.name}|${assignment.shift.name}|${assignment.shift.startTime}-${assignment.shift.endTime}|${assignment.roleTitle}`;
-      allShiftCombinations.add(key);
+      // For shelter runs, create driver+assistant pairs instead of separate roles
+      if (assignment.shift.department.name === 'shelter_runs' && assignment.shift.name === 'Shelter Run Morning') {
+        const key = `${assignment.shift.department.name}|${assignment.shift.name}|${assignment.shift.startTime}-${assignment.shift.endTime}|driver_assistant_team`;
+        allShiftCombinations.add(key);
+      } else {
+        const key = `${assignment.shift.department.name}|${assignment.shift.name}|${assignment.shift.startTime}-${assignment.shift.endTime}|${assignment.roleTitle}`;
+        allShiftCombinations.add(key);
+      }
     }
   });
 
@@ -295,12 +303,13 @@ const createCalendarSheet = async (workbook: any) => {
       'manager': 1,
       'prep_lead': 2, 
       'kitchen_helper': 3,
-      'driver': 4,
-      'prep_worker': 5,
-      'janitor': 6,
-      'assistant': 7,
-      'worker': 8,
-      'dishwasher': 9
+      'driver_assistant_team': 4, // Special priority for paired teams
+      'driver': 5,
+      'prep_worker': 6,
+      'janitor': 7,
+      'assistant': 8,
+      'worker': 9,
+      'dishwasher': 10
     };
     
     // Sort by department first
@@ -321,14 +330,14 @@ const createCalendarSheet = async (workbook: any) => {
     }
     
     // Finally by role priority
-    const aRolePriority = rolePriority[aRole] || 10;
-    const bRolePriority = rolePriority[bRole] || 10;
+    const aRolePriority = rolePriority[aRole] || 15;
+    const bRolePriority = rolePriority[bRole] || 15;
     return aRolePriority - bRolePriority;
   });
 
   let currentDept = '';
   
-  // Create rows for each shift+role combination
+  // Create rows for each shift combination
   sortedCombinations.forEach(combination => {
     const [deptName, shiftName, timeSlot, roleTitle] = combination.split('|');
     
@@ -339,80 +348,161 @@ const createCalendarSheet = async (workbook: any) => {
       calendarData.push([deptDisplayName]);
     }
     
-    const roleDisplay = roleTitle.replace('_', ' ');
-    
-    // Get all assignments for this specific combination (excluding midday and evening shelter runs)
-    const combinationAssignments = assignments.filter((a: any) => 
-      a.shift?.department?.name === deptName &&
-      a.shift?.name === shiftName &&
-      `${a.shift?.startTime}-${a.shift?.endTime}` === timeSlot &&
-      a.roleTitle === roleTitle &&
-      a.shift?.name !== 'Shelter Run Midday' &&
-      a.shift?.name !== 'Shelter Run Evening'
-    );
-
-    // Find the maximum number of people with this role on any single day
-    let maxPeopleForThisRole = 0;
-    dates.forEach(date => {
-      const dateStr = date.toISOString().split('T')[0];
-      const dayAssignments = combinationAssignments.filter((a: any) => 
-        a.assignedDate && a.assignedDate.split('T')[0] === dateStr
+    // Handle shelter run driver+assistant pairing
+    if (roleTitle === 'driver_assistant_team') {
+      // Get both drivers and assistants for this shift
+      const driverAssignments = assignments.filter((a: any) => 
+        a.shift?.department?.name === deptName &&
+        a.shift?.name === shiftName &&
+        `${a.shift?.startTime}-${a.shift?.endTime}` === timeSlot &&
+        a.roleTitle === 'driver' &&
+        a.shift?.name !== 'Shelter Run Midday' &&
+        a.shift?.name !== 'Shelter Run Evening'
       );
-      if (dayAssignments.length > maxPeopleForThisRole) {
-        maxPeopleForThisRole = dayAssignments.length;
-      }
-    });
-
-    // Create separate rows for each person in this role
-    for (let personIndex = 0; personIndex < Math.max(1, maxPeopleForThisRole); personIndex++) {
-      const row: any[] = [];
       
-      // First column: shift info (only show on first row of each role)
-      if (personIndex === 0) {
-        // Clean up shift name for display
-        let displayShiftName = shiftName;
-        if (shiftName === 'Shelter Run Morning') {
-          displayShiftName = 'Shelter Run';
+      const assistantAssignments = assignments.filter((a: any) => 
+        a.shift?.department?.name === deptName &&
+        a.shift?.name === shiftName &&
+        `${a.shift?.startTime}-${a.shift?.endTime}` === timeSlot &&
+        a.roleTitle === 'assistant' &&
+        a.shift?.name !== 'Shelter Run Midday' &&
+        a.shift?.name !== 'Shelter Run Evening'
+      );
+
+      // Determine the maximum number of teams needed
+      const maxTeams = Math.max(driverAssignments.length, assistantAssignments.length, 2); // At least 2 teams for shelter runs
+
+      // Create rows for each team
+      for (let teamIndex = 0; teamIndex < maxTeams; teamIndex++) {
+        const row: any[] = [];
+        
+        // First column: shift info (only show on first row)
+        if (teamIndex === 0) {
+          row.push(`${shiftName} - Team ${teamIndex + 1}`);
+        } else {
+          row.push(`Team ${teamIndex + 1}`);
         }
         
-        if (roleTitle === 'manager' || roleTitle === 'driver' || roleTitle === 'prep_lead' || roleTitle === 'kitchen_helper') {
-          row.push(`${displayShiftName} - ${roleDisplay}`);
-        } else {
-          row.push(`${displayShiftName}`);
-        }
-      } else {
-        row.push(''); // Empty for subsequent rows
+        // For each date, get the driver and assistant for this team
+        dates.forEach(date => {
+          const dateStr = date.toISOString().split('T')[0];
+          
+          // Get drivers and assistants for this date
+          const dayDrivers = driverAssignments.filter((a: any) => 
+            a.assignedDate && a.assignedDate.split('T')[0] === dateStr
+          );
+          const dayAssistants = assistantAssignments.filter((a: any) => 
+            a.assignedDate && a.assignedDate.split('T')[0] === dateStr
+          );
+          
+          // Sort for consistent pairing
+          dayDrivers.sort((a: any, b: any) => {
+            const aName = `${a.resident?.firstName || ''} ${a.resident?.lastName || ''}`;
+            const bName = `${b.resident?.firstName || ''} ${b.resident?.lastName || ''}`;
+            return aName.localeCompare(bName);
+          });
+          dayAssistants.sort((a: any, b: any) => {
+            const aName = `${a.resident?.firstName || ''} ${a.resident?.lastName || ''}`;
+            const bName = `${b.resident?.firstName || ''} ${b.resident?.lastName || ''}`;
+            return aName.localeCompare(bName);
+          });
+          
+          // Get the driver and assistant for this team index
+          const driver = teamIndex < dayDrivers.length ? dayDrivers[teamIndex] : null;
+          const assistant = teamIndex < dayAssistants.length ? dayAssistants[teamIndex] : null;
+          
+          // Format the cell content
+          let cellContent = '';
+          if (driver?.resident) {
+            cellContent += `D: ${driver.resident.firstName} ${driver.resident.lastName}`;
+          }
+          if (assistant?.resident) {
+            if (cellContent) cellContent += '\n';
+            cellContent += `A: ${assistant.resident.firstName} ${assistant.resident.lastName}`;
+          }
+          
+          row.push(cellContent || '');
+        });
+        
+        calendarData.push(row);
       }
+    } else {
+      // Handle all other roles normally (not shelter run driver/assistant)
+      const roleDisplay = roleTitle.replace('_', ' ');
       
-      // For each date, get the person at this index for this specific role
+      // Get all assignments for this specific combination
+      const combinationAssignments = assignments.filter((a: any) => 
+        a.shift?.department?.name === deptName &&
+        a.shift?.name === shiftName &&
+        `${a.shift?.startTime}-${a.shift?.endTime}` === timeSlot &&
+        a.roleTitle === roleTitle &&
+        a.shift?.name !== 'Shelter Run Midday' &&
+        a.shift?.name !== 'Shelter Run Evening'
+      );
+
+      // Find the maximum number of people with this role on any single day
+      let maxPeopleForThisRole = 0;
       dates.forEach(date => {
         const dateStr = date.toISOString().split('T')[0];
         const dayAssignments = combinationAssignments.filter((a: any) => 
           a.assignedDate && a.assignedDate.split('T')[0] === dateStr
         );
-        
-        // Sort to ensure consistent ordering
-        dayAssignments.sort((a: any, b: any) => {
-          const aName = `${a.resident?.firstName || ''} ${a.resident?.lastName || ''}`;
-          const bName = `${b.resident?.firstName || ''} ${b.resident?.lastName || ''}`;
-          return aName.localeCompare(bName);
-        });
-        
-        if (personIndex < dayAssignments.length) {
-          const assignment = dayAssignments[personIndex];
-          const resident = assignment?.resident;
-          
-          if (resident && resident.firstName && resident.lastName) {
-            row.push(`${resident.firstName} ${resident.lastName}`);
-          } else {
-            row.push('');
-          }
-        } else {
-          row.push(''); // Empty cell if no person at this index
+        if (dayAssignments.length > maxPeopleForThisRole) {
+          maxPeopleForThisRole = dayAssignments.length;
         }
       });
-      
-      calendarData.push(row);
+
+      // Create separate rows for each person in this role
+      for (let personIndex = 0; personIndex < Math.max(1, maxPeopleForThisRole); personIndex++) {
+        const row: any[] = [];
+        
+        // First column: shift info (only show on first row of each role)
+        if (personIndex === 0) {
+          // Clean up shift name for display
+          let displayShiftName = shiftName;
+          if (shiftName === 'Shelter Run Morning') {
+            displayShiftName = 'Shelter Run';
+          }
+          
+          if (roleTitle === 'manager' || roleTitle === 'driver' || roleTitle === 'prep_lead' || roleTitle === 'kitchen_helper') {
+            row.push(`${displayShiftName} - ${roleDisplay}`);
+          } else {
+            row.push(`${displayShiftName}`);
+          }
+        } else {
+          row.push(''); // Empty for subsequent rows
+        }
+        
+        // For each date, get the person at this index for this specific role
+        dates.forEach(date => {
+          const dateStr = date.toISOString().split('T')[0];
+          const dayAssignments = combinationAssignments.filter((a: any) => 
+            a.assignedDate && a.assignedDate.split('T')[0] === dateStr
+          );
+          
+          // Sort to ensure consistent ordering
+          dayAssignments.sort((a: any, b: any) => {
+            const aName = `${a.resident?.firstName || ''} ${a.resident?.lastName || ''}`;
+            const bName = `${b.resident?.firstName || ''} ${b.resident?.lastName || ''}`;
+            return aName.localeCompare(bName);
+          });
+          
+          if (personIndex < dayAssignments.length) {
+            const assignment = dayAssignments[personIndex];
+            const resident = assignment?.resident;
+            
+            if (resident && resident.firstName && resident.lastName) {
+              row.push(`${resident.firstName} ${resident.lastName}`);
+            } else {
+              row.push('');
+            }
+          } else {
+            row.push(''); // Empty cell if no person at this index
+          }
+        });
+        
+        calendarData.push(row);
+      }
     }
   });
 
@@ -472,8 +562,8 @@ const createCalendarSheet = async (workbook: any) => {
             }
           };
         }
-        // Shift/time column styling
-        else if (C === 0 && cell.v && typeof cell.v === 'string' && cell.v.includes('\n')) {
+        // Shift/time column styling with wrap text for driver+assistant pairs
+        else if (C === 0 && cell.v && typeof cell.v === 'string') {
           cell.s = {
             font: { bold: true },
             fill: { fgColor: { rgb: 'F0F0F0' } },
@@ -486,10 +576,10 @@ const createCalendarSheet = async (workbook: any) => {
             }
           };
         }
-        // Data cell styling
+        // Data cell styling with wrap text for driver+assistant pairs
         else if (C > 0 && R > 2) {
           cell.s = {
-            alignment: { vertical: 'center', horizontal: 'center' },
+            alignment: { vertical: 'center', horizontal: 'center', wrapText: true },
             border: {
               top: { style: 'thin' },
               bottom: { style: 'thin' },

@@ -1118,97 +1118,74 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
               }
             }
             
-            // If we don't have a team member assigned yet, find someone new
+          // If we don't have a team member assigned yet, find someone new
             if (!selectedResident) {
-              // Find eligible residents for this role (using existing logic)
-             // FIND this section in your schedule generation code and REPLACE it completely:
-// Look for the "Find eligible residents for this role" section
+              // Find eligible residents for this role
+              const eligibleResidents = residents.filter(resident => {
+                // Check if already assigned this day
+                if (dayUsed.has(resident.id)) return false;
 
-// Find eligible residents for this role (using existing logic)
-const eligibleResidents = residents.filter(resident => {
-  // Check if already assigned this day
-  if (dayUsed.has(resident.id)) return false;
+                // Check tenure requirement
+                if (shift.minTenureMonths > 0) {
+                  const admissionDate = new Date(resident.admissionDate);
+                  const monthsDiff = (date.getTime() - admissionDate.getTime()) / (1000 * 60 * 60 * 24 * 30.44);
+                  if (monthsDiff < shift.minTenureMonths) return false;
+                }
 
-  // Check tenure requirement
-  if (shift.minTenureMonths > 0) {
-    const admissionDate = new Date(resident.admissionDate);
-    const monthsDiff = (date.getTime() - admissionDate.getTime()) / (1000 * 60 * 60 * 24 * 30.44);
-    if (monthsDiff < shift.minTenureMonths) return false;
-  }
+                // Check qualification requirement
+                if (role.qualificationId) {
+                  const hasQualification = resident.qualifications.some(
+                    rq => rq.qualificationId === role.qualificationId
+                  );
+                  if (!hasQualification) return false;
+                }
 
-  // Check qualification requirement
-  if (role.qualificationId) {
-    const hasQualification = resident.qualifications.some(
-      rq => rq.qualificationId === role.qualificationId
-    );
-    if (!hasQualification) return false;
-  }
+                // Check availability
+                const dayAvailability = resident.availability.find(a => a.dayOfWeek === dayOfWeek);
+                if (dayAvailability) {
+                  const shiftStart = new Date(`2000-01-01T${shift.startTime}:00`);
+                  const shiftEnd = new Date(`2000-01-01T${shift.endTime}:00`);
+                  const availStart = new Date(`2000-01-01T${dayAvailability.startTime}:00`);
+                  const availEnd = new Date(`2000-01-01T${dayAvailability.endTime}:00`);
 
-  // Check availability
-  const dayAvailability = resident.availability.find(a => a.dayOfWeek === dayOfWeek);
-  if (dayAvailability) {
-    const shiftStart = new Date(`2000-01-01T${shift.startTime}:00`);
-    const shiftEnd = new Date(`2000-01-01T${shift.endTime}:00`);
-    const availStart = new Date(`2000-01-01T${dayAvailability.startTime}:00`);
-    const availEnd = new Date(`2000-01-01T${dayAvailability.endTime}:00`);
+                  if (shiftStart < availStart || shiftEnd > availEnd) return false;
+                }
 
-    if (shiftStart < availStart || shiftEnd > availEnd) return false;
-  }
+                // Check appointment conflicts
+                const conflictingAppointments = resident.appointments.filter(apt => {
+                  const aptStart = new Date(apt.startDateTime);
+                  const aptEnd = new Date(apt.endDateTime);
+                  
+                  const aptDateStr = aptStart.toLocaleDateString('en-CA');
+                  const currentDateStr = date.toLocaleDateString('en-CA');
+                  
+                  if (aptDateStr !== currentDateStr) return false;
 
-  // ========== FIXED APPOINTMENT CONFLICT LOGIC ==========
-  // Check appointment conflicts - THIS IS THE KEY FIX
-  const conflictingAppointments = resident.appointments.filter(apt => {
-    // Convert appointment times to local dates for comparison
-    const aptStart = new Date(apt.startDateTime);
-    const aptEnd = new Date(apt.endDateTime);
-    
-    // Get the appointment date in local timezone (YYYY-MM-DD format)
-    const aptDateStr = aptStart.toLocaleDateString('en-CA'); // YYYY-MM-DD format
-    const currentDateStr = date.toLocaleDateString('en-CA'); // YYYY-MM-DD format
-    
-    // Only check appointments on the same date
-    if (aptDateStr !== currentDateStr) return false;
+                  if (shift.blocksCounselingOnly && apt.appointmentType.name === 'counseling') return true;
+                  if (shift.blocksAllAppointments) return true;
+                  
+                  const shiftDate = new Date(date);
+                  const [shiftStartHour, shiftStartMin] = shift.startTime.split(':').map(Number);
+                  const [shiftEndHour, shiftEndMin] = shift.endTime.split(':').map(Number);
+                  
+                  const shiftStartTime = new Date(shiftDate);
+                  shiftStartTime.setHours(shiftStartHour, shiftStartMin, 0, 0);
+                  
+                  const shiftEndTime = new Date(shiftDate);
+                  shiftEndTime.setHours(shiftEndHour, shiftEndMin, 0, 0);
+                  
+                  const hasTimeOverlap = (aptStart < shiftEndTime && aptEnd > shiftStartTime);
+                  
+                  if (hasTimeOverlap) {
+                    console.log(`🚫 CONFLICT: ${resident.firstName} ${resident.lastName} excluded from ${shift.department.name}-${shift.name} due to ${apt.title} appointment`);
+                  }
+                  
+                  return hasTimeOverlap;
+                });
 
-    // Check shift-specific blocking rules first
-    if (shift.blocksCounselingOnly && apt.appointmentType.name === 'counseling') return true;
-    if (shift.blocksAllAppointments) return true;
-    
-    // For time overlap checking, we need to create proper local time comparisons
-    // Create shift times in the same timezone as appointments
-    const shiftDate = new Date(date);
-    
-    // Parse shift times and create Date objects in local timezone
-    const [shiftStartHour, shiftStartMin] = shift.startTime.split(':').map(Number);
-    const [shiftEndHour, shiftEndMin] = shift.endTime.split(':').map(Number);
-    
-    const shiftStartTime = new Date(shiftDate);
-    shiftStartTime.setHours(shiftStartHour, shiftStartMin, 0, 0);
-    
-    const shiftEndTime = new Date(shiftDate);
-    shiftEndTime.setHours(shiftEndHour, shiftEndMin, 0, 0);
-    
-    // Now compare times properly - check for overlap
-    // Appointments overlap if: apt starts before shift ends AND apt ends after shift starts
-    const hasTimeOverlap = (aptStart < shiftEndTime && aptEnd > shiftStartTime);
-    
-    // Debug logging to help troubleshoot
-    if (hasTimeOverlap) {
-      console.log(`🚫 APPOINTMENT CONFLICT DETECTED:`);
-      console.log(`   Resident: ${resident.firstName} ${resident.lastName}`);
-      console.log(`   Appointment: ${apt.title} (${apt.appointmentType.name})`);
-      console.log(`   Apt Time: ${aptStart.toLocaleTimeString()} - ${aptEnd.toLocaleTimeString()}`);
-      console.log(`   Shift: ${shift.department.name} - ${shift.name}`);
-      console.log(`   Shift Time: ${shiftStartTime.toLocaleTimeString()} - ${shiftEndTime.toLocaleTimeString()}`);
-      console.log(`   Date: ${currentDateStr}`);
-      console.log(`   ❌ EXCLUDING RESIDENT FROM ASSIGNMENT`);
-    }
-    
-    return hasTimeOverlap;
-  });
-
-  // THIS IS THE CRITICAL LINE: Return false if there are conflicts
-  return conflictingAppointments.length === 0;
-});
+                // Return false if there are conflicts (excludes resident from eligibility)
+                return conflictingAppointments.length === 0;
+              });
 // ========== END OF FIXED LOGIC ==========
 
               console.log(`          👥 Found ${eligibleResidents.length} eligible residents`);

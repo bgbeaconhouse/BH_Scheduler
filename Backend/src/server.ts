@@ -1053,20 +1053,19 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
     const assignments: any[] = [];
     const conflicts: any[] = [];
 
-    // Track weekly work counts for each resident
-    const weeklyWorkCounts = new Map<number, number>();
-
-    // Initialize weekly counts for all residents
-    residents.forEach(resident => {
-      weeklyWorkCounts.set(resident.id, 0);
-    });
-
     console.log(`📅 Processing ${dates.length} dates`);
 
     // Process each date
     for (const date of dates) {
       const dayOfWeek = date.getDay();
       const dayUsed = new Set<number>(); 
+      // Track weekly work counts for each resident
+const weeklyWorkCounts = new Map<number, number>();
+
+// Initialize weekly counts for all residents
+residents.forEach(resident => {
+  weeklyWorkCounts.set(resident.id, 0);
+});
       const dateStr = date.toISOString().split('T')[0];
       
       // SIMPLE FIX: Track consistent teams for this day
@@ -1126,123 +1125,127 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
               }
             }
             
-            // If we don't have a team member assigned yet, find someone new
+          // If we don't have a team member assigned yet, find someone new
             if (!selectedResident) {
               // Find eligible residents for this role
-              const eligibleResidents = residents.filter(resident => {
-                // Check if already assigned this day
-                if (dayUsed.has(resident.id)) return false;
+              // Find this section in your schedule generation code (around line 900) and update it:
 
-                // NEW: Check for San Pedro only restriction
-                const hasPedroOnlyQualification = resident.qualifications.some(
-                  rq => rq.qualification.name === 'thrift_pedro_only'
-                );
-                
-                // If resident has Pedro-only qualification, only allow San Pedro thrift store
-                if (hasPedroOnlyQualification) {
-                  if (shift.department.name !== 'thrift_stores' || shift.name !== 'San Pedro Thrift Store') {
-                    console.log(`🚫 PEDRO ONLY: ${resident.firstName} ${resident.lastName} excluded from ${shift.department.name}-${shift.name} (Pedro-only worker)`);
-                    return false;
-                  }
-                }
+// Find eligible residents for this role
+const eligibleResidents = residents.filter(resident => {
+  // Check if already assigned this day
+  if (dayUsed.has(resident.id)) return false;
 
-                // Check tenure requirement
-                if (shift.minTenureMonths > 0) {
-                  const admissionDate = new Date(resident.admissionDate);
-                  const monthsDiff = (date.getTime() - admissionDate.getTime()) / (1000 * 60 * 60 * 24 * 30.44);
-                  if (monthsDiff < shift.minTenureMonths) return false;
-                }
+  // NEW: Check for San Pedro only restriction
+  const hasPedroOnlyQualification = resident.qualifications.some(
+    rq => rq.qualification.name === 'thrift_pedro_only'
+  );
+  
+  // If resident has Pedro-only qualification, only allow San Pedro thrift store
+  if (hasPedroOnlyQualification) {
+    if (shift.department.name !== 'thrift_stores' || shift.name !== 'San Pedro Thrift Store') {
+      console.log(`🚫 PEDRO ONLY: ${resident.firstName} ${resident.lastName} excluded from ${shift.department.name}-${shift.name} (Pedro-only worker)`);
+      return false;
+    }
+  }
 
-                // Check qualification requirement
-                if (role.qualificationId) {
-                  const hasQualification = resident.qualifications.some(
-                    rq => rq.qualificationId === role.qualificationId
-                  );
-                  if (!hasQualification) return false;
-                }
+  // Check tenure requirement
+  if (shift.minTenureMonths > 0) {
+    const admissionDate = new Date(resident.admissionDate);
+    const monthsDiff = (date.getTime() - admissionDate.getTime()) / (1000 * 60 * 60 * 24 * 30.44);
+    if (monthsDiff < shift.minTenureMonths) return false;
+  }
 
-                // Check availability
-                const dayAvailability = resident.availability.find(a => a.dayOfWeek === dayOfWeek);
-                if (dayAvailability) {
-                  const shiftStart = new Date(`2000-01-01T${shift.startTime}:00`);
-                  const shiftEnd = new Date(`2000-01-01T${shift.endTime}:00`);
-                  const availStart = new Date(`2000-01-01T${dayAvailability.startTime}:00`);
-                  const availEnd = new Date(`2000-01-01T${dayAvailability.endTime}:00`);
+  // Check qualification requirement
+  if (role.qualificationId) {
+    const hasQualification = resident.qualifications.some(
+      rq => rq.qualificationId === role.qualificationId
+    );
+    if (!hasQualification) return false;
+  }
 
-                  if (shiftStart < availStart || shiftEnd > availEnd) return false;
-                }
+  // Check availability
+  const dayAvailability = resident.availability.find(a => a.dayOfWeek === dayOfWeek);
+  if (dayAvailability) {
+    const shiftStart = new Date(`2000-01-01T${shift.startTime}:00`);
+    const shiftEnd = new Date(`2000-01-01T${shift.endTime}:00`);
+    const availStart = new Date(`2000-01-01T${dayAvailability.startTime}:00`);
+    const availEnd = new Date(`2000-01-01T${dayAvailability.endTime}:00`);
 
-                // Check weekly work limit (3 times maximum)
-                const currentWeeklyCount = weeklyWorkCounts.get(resident.id) || 0;
-                if (currentWeeklyCount >= 3) {
-                  console.log(`🚫 WEEKLY LIMIT: ${resident.firstName} ${resident.lastName} already worked ${currentWeeklyCount} times this week`);
-                  return false;
-                }
+    if (shiftStart < availStart || shiftEnd > availEnd) return false;
+  }
 
-                // Check appointment conflicts
-                const conflictingAppointments = resident.appointments.filter(apt => {
-                  const aptStart = new Date(apt.startDateTime);
-                  const aptEnd = new Date(apt.endDateTime);
-                  
-                  const aptDateStr = aptStart.toLocaleDateString('en-CA');
-                  const currentDateStr = date.toLocaleDateString('en-CA');
-                  
-                  if (aptDateStr !== currentDateStr) return false;
+  // Check weekly work limit (3 times maximum)
+  const currentWeeklyCount = weeklyWorkCounts.get(resident.id) || 0;
+  if (currentWeeklyCount >= 3) {
+    console.log(`🚫 WEEKLY LIMIT: ${resident.firstName} ${resident.lastName} already worked ${currentWeeklyCount} times this week`);
+    return false;
+  }
 
-                  if (shift.blocksCounselingOnly && apt.appointmentType.name === 'counseling') return true;
-                  if (shift.blocksAllAppointments) return true;
-                  
-                  const shiftDate = new Date(date);
-                  const [shiftStartHour, shiftStartMin] = shift.startTime.split(':').map(Number);
-                  const [shiftEndHour, shiftEndMin] = shift.endTime.split(':').map(Number);
-                  
-                  const shiftStartTime = new Date(shiftDate);
-                  shiftStartTime.setHours(shiftStartHour, shiftStartMin, 0, 0);
-                  
-                  const shiftEndTime = new Date(shiftDate);
-                  shiftEndTime.setHours(shiftEndHour, shiftEndMin, 0, 0);
-                  
-                  const hasTimeOverlap = (aptStart < shiftEndTime && aptEnd > shiftStartTime);
-                  
-                  if (hasTimeOverlap) {
-                    console.log(`🚫 CONFLICT: ${resident.firstName} ${resident.lastName} excluded from ${shift.department.name}-${shift.name} due to ${apt.title} appointment`);
-                  }
-                  
-                  return hasTimeOverlap;
-                });
+  // Check appointment conflicts
+  const conflictingAppointments = resident.appointments.filter(apt => {
+    const aptStart = new Date(apt.startDateTime);
+    const aptEnd = new Date(apt.endDateTime);
+    
+    const aptDateStr = aptStart.toLocaleDateString('en-CA');
+    const currentDateStr = date.toLocaleDateString('en-CA');
+    
+    if (aptDateStr !== currentDateStr) return false;
 
-                // TEMPORARY: Force exclude residents with ANY appointments on the same day
-                if (resident.appointments.some(apt => {
-                  const aptDateStr = new Date(apt.startDateTime).toLocaleDateString('en-CA');
-                  const currentDateStr = date.toLocaleDateString('en-CA');
-                  return aptDateStr === currentDateStr;
-                })) {
-                  console.log(`🚫 TEMP: Excluding ${resident.firstName} ${resident.lastName} - has appointment on ${date.toLocaleDateString('en-CA')}`);
-                  return false; // Exclude this resident
-                }
+    if (shift.blocksCounselingOnly && apt.appointmentType.name === 'counseling') return true;
+    if (shift.blocksAllAppointments) return true;
+    
+    const shiftDate = new Date(date);
+    const [shiftStartHour, shiftStartMin] = shift.startTime.split(':').map(Number);
+    const [shiftEndHour, shiftEndMin] = shift.endTime.split(':').map(Number);
+    
+    const shiftStartTime = new Date(shiftDate);
+    shiftStartTime.setHours(shiftStartHour, shiftStartMin, 0, 0);
+    
+    const shiftEndTime = new Date(shiftDate);
+    shiftEndTime.setHours(shiftEndHour, shiftEndMin, 0, 0);
+    
+    const hasTimeOverlap = (aptStart < shiftEndTime && aptEnd > shiftStartTime);
+    
+    if (hasTimeOverlap) {
+      console.log(`🚫 CONFLICT: ${resident.firstName} ${resident.lastName} excluded from ${shift.department.name}-${shift.name} due to ${apt.title} appointment`);
+    }
+    
+    return hasTimeOverlap;
+  });
 
-                // Return false if there are conflicts (excludes resident from eligibility)
-                return conflictingAppointments.length === 0;
-              });
+  // TEMPORARY: Force exclude residents with ANY appointments on the same day
+  if (resident.appointments.some(apt => {
+    const aptDateStr = new Date(apt.startDateTime).toLocaleDateString('en-CA');
+    const currentDateStr = date.toLocaleDateString('en-CA');
+    return aptDateStr === currentDateStr;
+  })) {
+    console.log(`🚫 TEMP: Excluding ${resident.firstName} ${resident.lastName} - has appointment on ${date.toLocaleDateString('en-CA')}`);
+    return false; // Exclude this resident
+  }
+
+  // Return false if there are conflicts (excludes resident from eligibility)
+  return conflictingAppointments.length === 0;
+});
+// ========== END OF FIXED LOGIC ==========
 
               console.log(`          👥 Found ${eligibleResidents.length} eligible residents`);
 
               if (eligibleResidents.length > 0) {
                 // Load balancing - prefer residents with fewer assignments
-                const sortedCandidates = eligibleResidents.sort((a, b) => {
-                  // First priority: weekly work count (fewer is better)
-                  const aWeeklyCount = weeklyWorkCounts.get(a.id) || 0;
-                  const bWeeklyCount = weeklyWorkCounts.get(b.id) || 0;
-                  
-                  if (aWeeklyCount !== bWeeklyCount) {
-                    return aWeeklyCount - bWeeklyCount;
-                  }
-                  
-                  // Second priority: current assignments in this generation
-                  const aAssignments = assignments.filter(assign => assign.residentId === a.id).length;
-                  const bAssignments = assignments.filter(assign => assign.residentId === b.id).length;
-                  return aAssignments - bAssignments;
-                });
+              const sortedCandidates = eligibleResidents.sort((a, b) => {
+  // First priority: weekly work count (fewer is better)
+  const aWeeklyCount = weeklyWorkCounts.get(a.id) || 0;
+  const bWeeklyCount = weeklyWorkCounts.get(b.id) || 0;
+  
+  if (aWeeklyCount !== bWeeklyCount) {
+    return aWeeklyCount - bWeeklyCount;
+  }
+  
+  // Second priority: current assignments in this generation
+  const aAssignments = assignments.filter(assign => assign.residentId === a.id).length;
+  const bAssignments = assignments.filter(assign => assign.residentId === b.id).length;
+  return aAssignments - bAssignments;
+});
 
                 selectedResident = sortedCandidates[0];
                 
@@ -1276,9 +1279,9 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
               assignments.push(assignment);
 
               // Update weekly work count
-              const currentCount = weeklyWorkCounts.get(selectedResident.id) || 0;
-              weeklyWorkCounts.set(selectedResident.id, currentCount + 1);
-              console.log(`📊 WORK COUNT: ${selectedResident.firstName} ${selectedResident.lastName} now has ${currentCount + 1} assignments this week`);
+const currentCount = weeklyWorkCounts.get(selectedResident.id) || 0;
+weeklyWorkCounts.set(selectedResident.id, currentCount + 1);
+console.log(`📊 WORK COUNT: ${selectedResident.firstName} ${selectedResident.lastName} now has ${currentCount + 1} assignments this week`);
               
               // Only mark as dayUsed if this is their first assignment of the day
               // (shelter run people can work multiple shelter runs, prep workers can also do janitor)

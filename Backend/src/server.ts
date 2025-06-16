@@ -1201,195 +1201,216 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
 
       console.log(`  📋 Total role slots to fill: ${roleAssignments.length}`);
 
-      // ==========================================
-      // PHASE 1: MANAGEMENT ROLES (HIGHEST PRIORITY)
-      // ==========================================
-      console.log(`  🏆 PHASE 1: Assigning MANAGEMENT ROLES`);
+ // Fixed Phase 1 - only assign managers to roles that REQUIRE management qualifications
+// Replace the Phase 1 section in your generate-schedule route with this:
+
+// ==========================================
+// PHASE 1: MANAGEMENT ROLES (HIGHEST PRIORITY)
+// ==========================================
+console.log(`  🏆 PHASE 1: Assigning MANAGEMENT ROLES`);
+
+// FIXED: Only include roles that REQUIRE management qualifications
+const managementRoles = roleAssignments.filter(ra => {
+  const requiresManagementQualification = isManagementRole(ra.role); // Role REQUIRES a management qualification
+  return requiresManagementQualification;
+});
+
+console.log(`    Found ${managementRoles.length} management positions that REQUIRE management qualifications`);
+
+for (const roleAssignment of managementRoles) {
+  const { shift, role, slotIndex } = roleAssignment;
+  
+  console.log(`    🎯 Processing management role: ${shift.department.name} - ${role.roleTitle} (REQUIRES qualification: ${role.qualification?.name})`);
+  
+  // Find residents with the REQUIRED management qualification who are eligible
+  const eligibleResidents = residents.filter(resident => {
+    const eligibility = isResidentEligible(resident, shift, role, date, dayOfWeek, dayUsed, dateStr);
+    
+    // ADDITIONAL CHECK: Must have the specific management qualification required for this role
+    if (eligibility.eligible && role.qualificationId) {
+      const hasRequiredManagementQual = resident.qualifications.some(
+        rq => rq.qualificationId === role.qualificationId
+      );
+      if (!hasRequiredManagementQual) {
+        console.log(`    🚫 ${resident.firstName} ${resident.lastName} lacks required management qualification: ${role.qualification?.name}`);
+        return false;
+      }
+    }
+    
+    return eligibility.eligible;
+  });
+
+  console.log(`    👥 Found ${eligibleResidents.length} residents with required management qualification`);
+
+  if (eligibleResidents.length > 0) {
+    // Sort by qualifications first, then work balance
+    const sortedCandidates = eligibleResidents.sort((a, b) => {
+      // All should have the exact qualification due to filter above, so just sort by work balance
+      const aWorkDays = (weeklyWorkDays.get(a.id) || new Set()).size;
+      const bWorkDays = (weeklyWorkDays.get(b.id) || new Set()).size;
       
-      const managementRoles = roleAssignments.filter(ra => isManagementRole(ra.role));
+      return aWorkDays - bWorkDays;
+    });
 
-      console.log(`    Found ${managementRoles.length} management positions to fill`);
+    const selectedResident = sortedCandidates[0];
+    
+    // Create assignment
+    const assignment = {
+      schedulePeriodId: parseInt(schedulePeriodId),
+      shiftId: shift.id,
+      residentId: selectedResident.id,
+      assignedDate: date,
+      roleTitle: role.roleTitle,
+      status: 'scheduled'
+    };
+    
+    assignments.push(assignment);
 
-      for (const roleAssignment of managementRoles) {
-        const { shift, role, slotIndex } = roleAssignment;
-        
-        console.log(`    🎯 Processing management role: ${shift.department.name} - ${role.roleTitle} (qualification: ${role.qualification?.name})`);
-        
-        // Find residents with management qualifications who are eligible
-        const eligibleResidents = residents.filter(resident => {
-          const eligibility = isResidentEligible(resident, shift, role, date, dayOfWeek, dayUsed, dateStr);
-          return eligibility.eligible;
-        });
+    // Update tracking
+    const currentWorkDays = weeklyWorkDays.get(selectedResident.id) || new Set();
+    currentWorkDays.add(dateStr);
+    weeklyWorkDays.set(selectedResident.id, currentWorkDays);
+    dayUsed.add(selectedResident.id);
+    
+    console.log(`    ✅ MANAGER: Assigned ${selectedResident.firstName} ${selectedResident.lastName} to ${shift.department.name} - ${role.roleTitle} (has required qual: ${role.qualification?.name})`);
+  } else {
+    // Critical conflict - no manager available
+    const conflict = {
+      residentId: 0,
+      conflictDate: date,
+      conflictType: 'critical_manager_unfilled',
+      description: `CRITICAL: No eligible residents for MANAGEMENT role ${shift.department.name} - ${shift.name} - ${role.roleTitle} (requires ${role.qualification?.name})`,
+      severity: 'error'
+    };
+    conflicts.push(conflict);
+    console.log(`    ❌ CRITICAL: No manager available for ${shift.department.name} - ${role.roleTitle} (requires ${role.qualification?.name})`);
+  }
+}
 
-        if (eligibleResidents.length > 0) {
-          // Sort by qualifications first, then work balance
-          const sortedCandidates = eligibleResidents.sort((a, b) => {
-            // Prefer residents with exact qualifications
-            if (role.qualificationId) {
-              const aHasExactQual = a.qualifications.some(rq => rq.qualificationId === role.qualificationId);
-              const bHasExactQual = b.qualifications.some(rq => rq.qualificationId === role.qualificationId);
-              
-              if (aHasExactQual && !bHasExactQual) return -1;
-              if (!aHasExactQual && bHasExactQual) return 1;
-            }
+    // Fixed version - only assign drivers to roles that REQUIRE driving qualifications
+// Replace the Phase 2 section in your generate-schedule route with this:
 
-            // Then prefer fewer work days
-            const aWorkDays = (weeklyWorkDays.get(a.id) || new Set()).size;
-            const bWorkDays = (weeklyWorkDays.get(b.id) || new Set()).size;
-            
-            return aWorkDays - bWorkDays;
-          });
+// ==========================================
+// PHASE 2: DRIVING ROLES (HIGH PRIORITY)
+// ==========================================
+console.log(`  🚗 PHASE 2: Assigning DRIVING ROLES`);
 
-          const selectedResident = sortedCandidates[0];
-          
-          // Create assignment
-          const assignment = {
-            schedulePeriodId: parseInt(schedulePeriodId),
-            shiftId: shift.id,
-            residentId: selectedResident.id,
-            assignedDate: date,
-            roleTitle: role.roleTitle,
-            status: 'scheduled'
-          };
-          
-          assignments.push(assignment);
+// FIXED: Only include roles that REQUIRE driving qualifications
+const drivingRoles = roleAssignments.filter(ra => {
+  const requiresDrivingQualification = isDrivingRole(ra.role); // Role REQUIRES a driving qualification
+  const alreadyAssigned = assignments.some(a => 
+    a.shiftId === ra.shift.id && 
+    a.roleTitle === ra.role.roleTitle && 
+    a.assignedDate.toDateString() === date.toDateString()
+  );
+  return requiresDrivingQualification && !alreadyAssigned;
+});
 
-          // Update tracking
-          const currentWorkDays = weeklyWorkDays.get(selectedResident.id) || new Set();
-          currentWorkDays.add(dateStr);
-          weeklyWorkDays.set(selectedResident.id, currentWorkDays);
-          dayUsed.add(selectedResident.id);
-          
-          console.log(`    ✅ MANAGER: Assigned ${selectedResident.firstName} ${selectedResident.lastName} to ${shift.department.name} - ${role.roleTitle}`);
-        } else {
-          // Critical conflict - no manager available
-          const conflict = {
-            residentId: 0,
-            conflictDate: date,
-            conflictType: 'critical_manager_unfilled',
-            description: `CRITICAL: No eligible residents for MANAGEMENT role ${shift.department.name} - ${shift.name} - ${role.roleTitle} (requires ${role.qualification?.name})`,
-            severity: 'error'
-          };
-          conflicts.push(conflict);
-          console.log(`    ❌ CRITICAL: No manager available for ${shift.department.name} - ${role.roleTitle}`);
+console.log(`    Found ${drivingRoles.length} driving positions that REQUIRE driving qualifications`);
+
+for (const roleAssignment of drivingRoles) {
+  const { shift, role, slotIndex } = roleAssignment;
+  
+  console.log(`    🎯 Processing driving role: ${shift.department.name} - ${role.roleTitle} (REQUIRES qualification: ${role.qualification?.name})`);
+  
+  // Check for existing team assignments
+  let selectedResident = null;
+  
+  if (shift.department.name === 'shelter_runs') {
+    const teamKey = `${role.roleTitle}_${slotIndex}`;
+    
+    if (shelterRunTeams[teamKey]) {
+      const existingResidentId = shelterRunTeams[teamKey];
+      const existingResident = residents.find(r => r.id === existingResidentId);
+      
+      if (existingResident) {
+        const eligibility = isResidentEligible(existingResident, shift, role, date, dayOfWeek, dayUsed, dateStr);
+        if (eligibility.eligible) {
+          selectedResident = existingResident;
+          console.log(`    🔄 Reusing shelter run driver: ${selectedResident.firstName} ${selectedResident.lastName}`);
         }
       }
-
-      // ==========================================
-      // PHASE 2: DRIVING ROLES (HIGH PRIORITY)
-      // ==========================================
-      console.log(`  🚗 PHASE 2: Assigning DRIVING ROLES`);
+    }
+  }
+  
+  // If no existing team member, find someone new with the REQUIRED driving qualification
+  if (!selectedResident) {
+    const eligibleResidents = residents.filter(resident => {
+      const eligibility = isResidentEligible(resident, shift, role, date, dayOfWeek, dayUsed, dateStr);
       
-      const drivingRoles = roleAssignments.filter(ra => {
-        const isDriver = isDrivingRole(ra.role);
-        const alreadyAssigned = assignments.some(a => 
-          a.shiftId === ra.shift.id && 
-          a.roleTitle === ra.role.roleTitle && 
-          a.assignedDate.toDateString() === date.toDateString()
+      // ADDITIONAL CHECK: Must have the specific driving qualification required for this role
+      if (eligibility.eligible && role.qualificationId) {
+        const hasRequiredDrivingQual = resident.qualifications.some(
+          rq => rq.qualificationId === role.qualificationId
         );
-        return isDriver && !alreadyAssigned;
+        if (!hasRequiredDrivingQual) {
+          console.log(`    🚫 ${resident.firstName} ${resident.lastName} lacks required driving qualification: ${role.qualification?.name}`);
+          return false;
+        }
+      }
+      
+      return eligibility.eligible;
+    });
+
+    console.log(`    👥 Found ${eligibleResidents.length} residents with required driving qualification`);
+
+    if (eligibleResidents.length > 0) {
+      const sortedCandidates = eligibleResidents.sort((a, b) => {
+        // Prefer residents with exact qualifications (should all have it due to filter above)
+        // Then prefer fewer work days
+        const aWorkDays = (weeklyWorkDays.get(a.id) || new Set()).size;
+        const bWorkDays = (weeklyWorkDays.get(b.id) || new Set()).size;
+        
+        return aWorkDays - bWorkDays;
       });
 
-      console.log(`    Found ${drivingRoles.length} driving positions to fill`);
-
-      for (const roleAssignment of drivingRoles) {
-        const { shift, role, slotIndex } = roleAssignment;
-        
-        console.log(`    🎯 Processing driving role: ${shift.department.name} - ${role.roleTitle} (qualification: ${role.qualification?.name})`);
-        
-        // Check for existing team assignments
-        let selectedResident = null;
-        
-        if (shift.department.name === 'shelter_runs') {
-          const teamKey = `${role.roleTitle}_${slotIndex}`;
-          
-          if (shelterRunTeams[teamKey]) {
-            const existingResidentId = shelterRunTeams[teamKey];
-            const existingResident = residents.find(r => r.id === existingResidentId);
-            
-            if (existingResident) {
-              const eligibility = isResidentEligible(existingResident, shift, role, date, dayOfWeek, dayUsed, dateStr);
-              if (eligibility.eligible) {
-                selectedResident = existingResident;
-                console.log(`    🔄 Reusing shelter run driver: ${selectedResident.firstName} ${selectedResident.lastName}`);
-              }
-            }
-          }
-        }
-        
-        // If no existing team member, find someone new
-        if (!selectedResident) {
-          const eligibleResidents = residents.filter(resident => {
-            const eligibility = isResidentEligible(resident, shift, role, date, dayOfWeek, dayUsed, dateStr);
-            return eligibility.eligible;
-          });
-
-          if (eligibleResidents.length > 0) {
-            const sortedCandidates = eligibleResidents.sort((a, b) => {
-              // Prefer residents with exact qualifications
-              if (role.qualificationId) {
-                const aHasExactQual = a.qualifications.some(rq => rq.qualificationId === role.qualificationId);
-                const bHasExactQual = b.qualifications.some(rq => rq.qualificationId === role.qualificationId);
-                
-                if (aHasExactQual && !bHasExactQual) return -1;
-                if (!aHasExactQual && bHasExactQual) return 1;
-              }
-
-              // Then prefer fewer work days
-              const aWorkDays = (weeklyWorkDays.get(a.id) || new Set()).size;
-              const bWorkDays = (weeklyWorkDays.get(b.id) || new Set()).size;
-              
-              return aWorkDays - bWorkDays;
-            });
-
-            selectedResident = sortedCandidates[0];
-            
-            // Remember for team consistency
-            if (shift.department.name === 'shelter_runs') {
-              const teamKey = `${role.roleTitle}_${slotIndex}`;
-              shelterRunTeams[teamKey] = selectedResident.id;
-            }
-          }
-        }
-        
-        if (selectedResident) {
-          // Create assignment
-          const assignment = {
-            schedulePeriodId: parseInt(schedulePeriodId),
-            shiftId: shift.id,
-            residentId: selectedResident.id,
-            assignedDate: date,
-            roleTitle: role.roleTitle,
-            status: 'scheduled'
-          };
-          
-          assignments.push(assignment);
-
-          // Update tracking (but allow multiple shelter runs per day for team roles)
-          const currentWorkDays = weeklyWorkDays.get(selectedResident.id) || new Set();
-          currentWorkDays.add(dateStr);
-          weeklyWorkDays.set(selectedResident.id, currentWorkDays);
-          
-          const isTeamRole = shift.department.name === 'shelter_runs';
-          if (!isTeamRole) {
-            dayUsed.add(selectedResident.id);
-          }
-          
-          console.log(`    ✅ DRIVER: Assigned ${selectedResident.firstName} ${selectedResident.lastName} to ${shift.department.name} - ${role.roleTitle}`);
-        } else {
-          // High priority conflict
-          const conflict = {
-            residentId: 0,
-            conflictDate: date,
-            conflictType: 'high_priority_driver_unfilled',
-            description: `HIGH PRIORITY: No eligible residents for DRIVING role ${shift.department.name} - ${shift.name} - ${role.roleTitle} (requires ${role.qualification?.name})`,
-            severity: 'error'
-          };
-          conflicts.push(conflict);
-          console.log(`    ❌ HIGH PRIORITY: No driver available for ${shift.department.name} - ${role.roleTitle}`);
-        }
+      selectedResident = sortedCandidates[0];
+      
+      // Remember for team consistency
+      if (shift.department.name === 'shelter_runs') {
+        const teamKey = `${role.roleTitle}_${slotIndex}`;
+        shelterRunTeams[teamKey] = selectedResident.id;
       }
+    }
+  }
+  
+  if (selectedResident) {
+    // Create assignment
+    const assignment = {
+      schedulePeriodId: parseInt(schedulePeriodId),
+      shiftId: shift.id,
+      residentId: selectedResident.id,
+      assignedDate: date,
+      roleTitle: role.roleTitle,
+      status: 'scheduled'
+    };
+    
+    assignments.push(assignment);
 
+    // Update tracking (but allow multiple shelter runs per day for team roles)
+    const currentWorkDays = weeklyWorkDays.get(selectedResident.id) || new Set();
+    currentWorkDays.add(dateStr);
+    weeklyWorkDays.set(selectedResident.id, currentWorkDays);
+    
+    const isTeamRole = shift.department.name === 'shelter_runs';
+    if (!isTeamRole) {
+      dayUsed.add(selectedResident.id);
+    }
+    
+    console.log(`    ✅ DRIVER: Assigned ${selectedResident.firstName} ${selectedResident.lastName} to ${shift.department.name} - ${role.roleTitle} (has required qual: ${role.qualification?.name})`);
+  } else {
+    // High priority conflict
+    const conflict = {
+      residentId: 0,
+      conflictDate: date,
+      conflictType: 'high_priority_driver_unfilled',
+      description: `HIGH PRIORITY: No eligible residents for DRIVING role ${shift.department.name} - ${shift.name} - ${role.roleTitle} (requires ${role.qualification?.name})`,
+      severity: 'error'
+    };
+    conflicts.push(conflict);
+    console.log(`    ❌ HIGH PRIORITY: No driver available for ${shift.department.name} - ${role.roleTitle} (requires ${role.qualification?.name})`);
+  }
+}
       // ==========================================
       // PHASE 3: ALL OTHER ROLES (NORMAL PRIORITY)
       // ==========================================

@@ -1497,6 +1497,148 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
   }
 });
 
+// Add this debug route ONLY (the getRolePriority function should already exist above)
+app.post('/api/generate-schedule-debug', async (req: any, res: any) => {
+  try {
+    const { schedulePeriodId, startDate, endDate } = req.body;
+    
+    if (!schedulePeriodId || !startDate || !endDate) {
+      return res.status(400).json({ error: 'Schedule period ID, start date, and end date are required' });
+    }
+
+    console.log('🔥 DEBUG SCHEDULE GENERATION - CHECKING ROLE PRIORITIES');
+
+    // Get all active shifts with their requirements
+    const shifts = await prisma.shift.findMany({
+      where: { isActive: true },
+      include: {
+        department: true,
+        roles: {
+          include: {
+            qualification: true
+          }
+        }
+      },
+      orderBy: [
+        { department: { priority: 'desc' } },
+        { startTime: 'asc' }
+      ]
+    });
+
+    console.log('🔍 ANALYZING ALL ROLES IN YOUR DATABASE:');
+    console.log('==========================================');
+    
+    const allRoles = new Map<string, any>();
+    
+    shifts.forEach(shift => {
+      console.log(`\n🏢 DEPARTMENT: ${shift.department.name}`);
+      console.log(`   SHIFT: ${shift.name}`);
+      
+      shift.roles.forEach(role => {
+        const priority = getRolePriority(role.roleTitle, shift.department.name);
+        const key = `${shift.department.name}_${role.roleTitle}`;
+        
+        allRoles.set(key, {
+          department: shift.department.name,
+          shift: shift.name,
+          roleTitle: role.roleTitle,
+          priority: priority,
+          qualificationId: role.qualificationId,
+          qualification: role.qualification?.name || 'No qualification required'
+        });
+        
+        console.log(`   📋 Role: "${role.roleTitle}" -> Priority: ${priority} ${priority > 50 ? '⭐ HIGH PRIORITY' : ''}`);
+        console.log(`       Qualification: ${role.qualification?.name || 'None required'}`);
+      });
+    });
+
+    console.log('\n📊 PRIORITY SUMMARY:');
+    console.log('====================');
+    
+    const priorityGroups = {
+      high: Array.from(allRoles.values()).filter(r => r.priority > 50),
+      medium: Array.from(allRoles.values()).filter(r => r.priority > 0 && r.priority <= 50),
+      low: Array.from(allRoles.values()).filter(r => r.priority === 0)
+    };
+    
+    console.log(`🔴 HIGH PRIORITY ROLES (${priorityGroups.high.length}):`);
+    priorityGroups.high.forEach(role => {
+      console.log(`   - ${role.department}/${role.roleTitle} (${role.priority})`);
+    });
+    
+    console.log(`🟡 MEDIUM PRIORITY ROLES (${priorityGroups.medium.length}):`);
+    priorityGroups.medium.forEach(role => {
+      console.log(`   - ${role.department}/${role.roleTitle} (${role.priority})`);
+    });
+    
+    console.log(`🟢 LOW/NO PRIORITY ROLES (${priorityGroups.low.length}):`);
+    priorityGroups.low.forEach(role => {
+      console.log(`   - ${role.department}/${role.roleTitle} (${role.priority})`);
+    });
+
+    // Test the sorting for one day
+    const testDate = new Date(startDate);
+    const dayOfWeek = testDate.getDay();
+    const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+    
+    console.log(`\n🧪 TESTING ROLE SORTING FOR ${days[dayOfWeek].toUpperCase()}:`);
+    console.log('=============================================');
+    
+    const dayShifts = shifts.filter(shift => {
+      return shift[days[dayOfWeek] as keyof typeof shift] === true;
+    });
+    
+    dayShifts.forEach(shift => {
+      console.log(`\n🔄 SHIFT: ${shift.department.name} - ${shift.name}`);
+      
+      console.log('   BEFORE SORTING:');
+      shift.roles.forEach((role, index) => {
+        const priority = getRolePriority(role.roleTitle, shift.department.name);
+        console.log(`     ${index + 1}. ${role.roleTitle} (priority: ${priority})`);
+      });
+      
+      const sortedRoles = shift.roles.sort((a, b) => {
+        const aPriority = getRolePriority(a.roleTitle, shift.department.name);
+        const bPriority = getRolePriority(b.roleTitle, shift.department.name);
+        
+        if (aPriority !== bPriority) {
+          return bPriority - aPriority; // Descending order
+        }
+        
+        const aHasQual = a.qualificationId ? 1 : 0;
+        const bHasQual = b.qualificationId ? 1 : 0;
+        return bHasQual - aHasQual;
+      });
+      
+      console.log('   AFTER SORTING:');
+      sortedRoles.forEach((role, index) => {
+        const priority = getRolePriority(role.roleTitle, shift.department.name);
+        console.log(`     ${index + 1}. ${role.roleTitle} (priority: ${priority}) ${priority > 50 ? '⭐' : ''}`);
+      });
+    });
+
+    // Return analysis instead of running full generation
+    res.json({
+      message: 'Debug analysis complete - check server logs',
+      analysis: {
+        totalShifts: shifts.length,
+        totalRoles: allRoles.size,
+        highPriorityRoles: priorityGroups.high.length,
+        mediumPriorityRoles: priorityGroups.medium.length,
+        lowPriorityRoles: priorityGroups.low.length,
+        dayShiftsForTest: dayShifts.length,
+        allRoles: Array.from(allRoles.values()).sort((a, b) => b.priority - a.priority)
+      }
+    });
+
+  } catch (error: any) {
+    console.error('💥 Error in debug:', error);
+    res.status(500).json({ 
+      error: 'Debug failed',
+      details: error.message 
+    });
+  }
+});
 app.get('/api/schedule-periods/:id/assignments', async (req: any, res: any) => {
   try {
     const { id } = req.params;

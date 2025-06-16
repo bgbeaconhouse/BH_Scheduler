@@ -945,9 +945,23 @@ app.get('/api/schedule-periods', async (req: any, res: any) => {
   }
 });
 
+// Replace your existing schedule periods route with this:
 app.post('/api/schedule-periods', async (req: any, res: any) => {
   try {
     const { name, startDate, endDate } = req.body;
+    
+    console.log('🔍 DEBUG - Raw input dates:');
+    console.log('  startDate from frontend:', startDate);
+    console.log('  endDate from frontend:', endDate);
+    
+    const processedStartDate = parseAsLocalDate(startDate + 'T00:00:00');
+    const processedEndDate = parseAsLocalDate(endDate + 'T23:59:59');
+    
+    console.log('🔍 DEBUG - After parseAsLocalDate:');
+    console.log('  processedStartDate:', processedStartDate);
+    console.log('  processedEndDate:', processedEndDate);
+    console.log('  processedStartDate ISO:', processedStartDate.toISOString());
+    console.log('  processedEndDate ISO:', processedEndDate.toISOString());
     
     if (!name || !startDate || !endDate) {
       return res.status(400).json({ error: 'Name, start date, and end date are required' });
@@ -956,10 +970,13 @@ app.post('/api/schedule-periods', async (req: any, res: any) => {
     const period = await prisma.schedulePeriod.create({
       data: {
         name: name.trim(),
-        startDate: new Date(startDate),
-        endDate: new Date(endDate)
+        startDate: processedStartDate,
+        endDate: processedEndDate
       }
     });
+    
+    console.log('🔍 DEBUG - Created period:');
+    console.log('  period:', period);
     
     res.status(201).json(period);
   } catch (error: any) {
@@ -1049,8 +1066,8 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
     console.log(`📊 Found ${shifts.length} shifts and ${residents.length} residents`);
 
     // Generate date range
-    const start = new Date(startDate);
-    const end = new Date(endDate);
+    const start = parseAsLocalDate(startDate + 'T00:00:00');
+    const end = parseAsLocalDate(endDate + 'T23:59:59');
     const dates = [];
     for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
       dates.push(new Date(d));
@@ -2506,6 +2523,44 @@ app.post('/api/work-limits/validate', async (req: any, res: any) => {
   }
 });
 
+// TEMPORARY: Add this route to update donation tenure requirement
+app.post('/api/update-donation-tenure', async (req, res) => {
+  try {
+    // First, let's see what shifts exist
+    const allShifts = await prisma.shift.findMany({
+      include: {
+        department: true
+      }
+    });
+    
+    console.log('All shifts:', allShifts.map(s => ({
+      id: s.id,
+      name: s.name,
+      department: s.department.name,
+      currentTenure: s.minTenureMonths
+    })));
+
+    const updateResult = await prisma.shift.updateMany({
+      where: {
+        OR: [
+          { name: { contains: 'donation', mode: 'insensitive' } },
+          { name: { contains: 'pickup', mode: 'insensitive' } }
+        ]
+      },
+      data: {
+        minTenureMonths: 6
+      }
+    });
+
+    res.json({
+      message: 'Updated donation pickup shifts to require 6 months tenure',
+      updatedCount: updateResult.count
+    });
+  } catch (error) {
+    console.error('Error updating donation shifts:', error);
+    res.status(500).json({ error: 'Failed to update shifts' });
+  }
+});
 
 // Error handling middleware
 app.use((error: any, req: express.Request, res: express.Response, next: express.NextFunction) => {

@@ -970,7 +970,7 @@ app.post('/api/schedule-periods', async (req: any, res: any) => {
 
 
 
-// Updated schedule generation with phase-based role assignment
+// Updated schedule generation with qualification-based phase detection
 app.post('/api/generate-schedule', async (req: any, res: any) => {
   try {
     const { schedulePeriodId, startDate, endDate } = req.body;
@@ -979,7 +979,7 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       return res.status(400).json({ error: 'Schedule period ID, start date, and end date are required' });
     }
 
-    console.log('🔥 PHASE-BASED SCHEDULE GENERATION STARTED');
+    console.log('🔥 QUALIFICATION-BASED SCHEDULE GENERATION STARTED');
     console.log('Period:', schedulePeriodId, 'Dates:', startDate, 'to', endDate);
 
     // Clear existing assignments for this period
@@ -996,6 +996,21 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
         }
       }
     });
+
+    // Get all qualifications to identify management and driving qualifications
+    const qualifications = await prisma.qualification.findMany();
+    
+    const managementQualifications = qualifications.filter(q => 
+      q.name.includes('thrift_manager_')
+    ).map(q => q.id);
+    
+    const drivingQualifications = qualifications.filter(q => 
+      q.name.startsWith('driver_')
+    ).map(q => q.id);
+
+    console.log('🎯 DETECTED QUALIFICATIONS:');
+    console.log(`   Management qualification IDs: ${managementQualifications}`);
+    console.log(`   Driving qualification IDs: ${drivingQualifications}`);
 
     // Get all active shifts with their requirements
     const shifts = await prisma.shift.findMany({
@@ -1061,7 +1076,7 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       weeklyWorkDays.set(resident.id, new Set());
     });
 
-    console.log(`📅 Processing ${dates.length} dates with PHASE-BASED ASSIGNMENT`);
+    console.log(`📅 Processing ${dates.length} dates with QUALIFICATION-BASED ASSIGNMENT`);
 
     // Helper function to check if resident is eligible for a role
     function isResidentEligible(resident: any, shift: any, role: any, date: Date, dayOfWeek: number, dayUsed: Set<number>, dateStr: string): { eligible: boolean, reason?: string } {
@@ -1138,6 +1153,16 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       return { eligible: true };
     }
 
+    // Helper function to check if a role requires management qualifications
+    function isManagementRole(role: any): boolean {
+      return role.qualificationId && managementQualifications.includes(role.qualificationId);
+    }
+
+    // Helper function to check if a role requires driving qualifications
+    function isDrivingRole(role: any): boolean {
+      return role.qualificationId && drivingQualifications.includes(role.qualificationId);
+    }
+
     // Process each date
     for (const date of dates) {
       const dayOfWeek = date.getDay();
@@ -1177,24 +1202,20 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       console.log(`  📋 Total role slots to fill: ${roleAssignments.length}`);
 
       // ==========================================
-      // PHASE 1: THRIFT STORE MANAGERS (HIGHEST PRIORITY)
+      // PHASE 1: MANAGEMENT ROLES (HIGHEST PRIORITY)
       // ==========================================
-      console.log(`  🏆 PHASE 1: Assigning THRIFT STORE MANAGERS`);
+      console.log(`  🏆 PHASE 1: Assigning MANAGEMENT ROLES`);
       
-      const managerRoles = roleAssignments.filter(ra => {
-        const isThriftManager = (
-          ra.shift.department.name.includes('thrift') && 
-          (ra.role.roleTitle.toLowerCase().includes('manager') || ra.role.roleTitle.toLowerCase().includes('lead'))
-        );
-        return isThriftManager;
-      });
+      const managementRoles = roleAssignments.filter(ra => isManagementRole(ra.role));
 
-      console.log(`    Found ${managerRoles.length} manager positions to fill`);
+      console.log(`    Found ${managementRoles.length} management positions to fill`);
 
-      for (const roleAssignment of managerRoles) {
+      for (const roleAssignment of managementRoles) {
         const { shift, role, slotIndex } = roleAssignment;
         
-        // Find best resident for this manager role
+        console.log(`    🎯 Processing management role: ${shift.department.name} - ${role.roleTitle} (qualification: ${role.qualification?.name})`);
+        
+        // Find residents with management qualifications who are eligible
         const eligibleResidents = residents.filter(resident => {
           const eligibility = isResidentEligible(resident, shift, role, date, dayOfWeek, dayUsed, dateStr);
           return eligibility.eligible;
@@ -1246,7 +1267,7 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
             residentId: 0,
             conflictDate: date,
             conflictType: 'critical_manager_unfilled',
-            description: `CRITICAL: No eligible residents for MANAGER role ${shift.department.name} - ${shift.name} - ${role.roleTitle}`,
+            description: `CRITICAL: No eligible residents for MANAGEMENT role ${shift.department.name} - ${shift.name} - ${role.roleTitle} (requires ${role.qualification?.name})`,
             severity: 'error'
           };
           conflicts.push(conflict);
@@ -1255,12 +1276,12 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       }
 
       // ==========================================
-      // PHASE 2: DRIVING POSITIONS (HIGH PRIORITY)
+      // PHASE 2: DRIVING ROLES (HIGH PRIORITY)
       // ==========================================
-      console.log(`  🚗 PHASE 2: Assigning DRIVING POSITIONS`);
+      console.log(`  🚗 PHASE 2: Assigning DRIVING ROLES`);
       
-      const driverRoles = roleAssignments.filter(ra => {
-        const isDriver = ra.role.roleTitle.toLowerCase().includes('driver');
+      const drivingRoles = roleAssignments.filter(ra => {
+        const isDriver = isDrivingRole(ra.role);
         const alreadyAssigned = assignments.some(a => 
           a.shiftId === ra.shift.id && 
           a.roleTitle === ra.role.roleTitle && 
@@ -1269,10 +1290,12 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
         return isDriver && !alreadyAssigned;
       });
 
-      console.log(`    Found ${driverRoles.length} driver positions to fill`);
+      console.log(`    Found ${drivingRoles.length} driving positions to fill`);
 
-      for (const roleAssignment of driverRoles) {
+      for (const roleAssignment of drivingRoles) {
         const { shift, role, slotIndex } = roleAssignment;
+        
+        console.log(`    🎯 Processing driving role: ${shift.department.name} - ${role.roleTitle} (qualification: ${role.qualification?.name})`);
         
         // Check for existing team assignments
         let selectedResident = null;
@@ -1359,7 +1382,7 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
             residentId: 0,
             conflictDate: date,
             conflictType: 'high_priority_driver_unfilled',
-            description: `HIGH PRIORITY: No eligible residents for DRIVER role ${shift.department.name} - ${shift.name} - ${role.roleTitle}`,
+            description: `HIGH PRIORITY: No eligible residents for DRIVING role ${shift.department.name} - ${shift.name} - ${role.roleTitle} (requires ${role.qualification?.name})`,
             severity: 'error'
           };
           conflicts.push(conflict);
@@ -1373,11 +1396,8 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       console.log(`  📝 PHASE 3: Assigning REMAINING ROLES`);
       
       const remainingRoles = roleAssignments.filter(ra => {
-        const isManager = (
-          ra.shift.department.name.includes('thrift') && 
-          (ra.role.roleTitle.toLowerCase().includes('manager') || ra.role.roleTitle.toLowerCase().includes('lead'))
-        );
-        const isDriver = ra.role.roleTitle.toLowerCase().includes('driver');
+        const isManager = isManagementRole(ra.role);
+        const isDriver = isDrivingRole(ra.role);
         
         const alreadyAssigned = assignments.some(a => 
           a.shiftId === ra.shift.id && 
@@ -1506,19 +1526,23 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
     }
 
     // Log final statistics
-    const managerAssignments = assignments.filter(a => {
+    const managementAssignments = assignments.filter(a => {
       const matchingShift = shifts.find(s => s.id === a.shiftId);
-      return matchingShift?.department.name.includes('thrift') && 
-             (a.roleTitle.toLowerCase().includes('manager') || a.roleTitle.toLowerCase().includes('lead'));
+      const matchingRole = matchingShift?.roles.find(r => r.roleTitle === a.roleTitle);
+      return matchingRole && isManagementRole(matchingRole);
     });
 
-    const driverAssignments = assignments.filter(a => a.roleTitle.toLowerCase().includes('driver'));
+    const drivingAssignments = assignments.filter(a => {
+      const matchingShift = shifts.find(s => s.id === a.shiftId);
+      const matchingRole = matchingShift?.roles.find(r => r.roleTitle === a.roleTitle);
+      return matchingRole && isDrivingRole(matchingRole);
+    });
 
-    console.log(`\n📊 PHASE-BASED GENERATION COMPLETE:`);
+    console.log(`\n📊 QUALIFICATION-BASED GENERATION COMPLETE:`);
     console.log(`📊 - Total assignments: ${assignments.length}`);
-    console.log(`📊 - Manager assignments: ${managerAssignments.length}`);
-    console.log(`📊 - Driver assignments: ${driverAssignments.length}`);
-    console.log(`📊 - Other assignments: ${assignments.length - managerAssignments.length - driverAssignments.length}`);
+    console.log(`📊 - Management assignments: ${managementAssignments.length}`);
+    console.log(`📊 - Driving assignments: ${drivingAssignments.length}`);
+    console.log(`📊 - Other assignments: ${assignments.length - managementAssignments.length - drivingAssignments.length}`);
     console.log(`📊 - Total conflicts: ${conflicts.length}`);
 
     const criticalConflicts = conflicts.filter(c => c.severity === 'error');
@@ -1586,8 +1610,8 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
     const finalStats = {
       assignmentsGenerated: assignments.length,
       assignmentsCreated: actuallyCreated,
-      managerAssignments: managerAssignments.length,
-      driverAssignments: driverAssignments.length,
+      managementAssignments: managementAssignments.length,
+      drivingAssignments: drivingAssignments.length,
       conflictsFound: conflicts.length,
       conflictsCreated: conflictsCreated,
       criticalConflicts: criticalConflicts.length,

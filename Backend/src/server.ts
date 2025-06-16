@@ -968,12 +968,51 @@ app.post('/api/schedule-periods', async (req: any, res: any) => {
   }
 });
 
-// SIMPLE FIX: Just track and reuse shelter run teams for the same day
-// Enhanced schedule generation logic with proper 3-day work limit
-// Replace the generate-schedule endpoint in your backend (around line 900)
 
-// FIXED VERSION: Replace your /api/generate-schedule endpoint with this corrected version
-// This properly counts work DAYS, not individual shift assignments
+
+
+// Add this function at the top of your schedule generation route
+function getRolePriority(roleTitle: string, departmentName: string): number {
+  // Define priority roles (higher number = higher priority)
+  const priorities: Record<string, number> = {
+    // Thrift store managers - HIGHEST PRIORITY
+    'thrift_manager': 100,
+    'manager': 90,
+    'store_manager': 90,
+    
+    // Drivers - HIGH PRIORITY
+    'driver': 80,
+    'shelter_run_driver': 80,
+    'thrift_driver': 80,
+    'pickup_driver': 80,
+    
+    // Kitchen leadership - MEDIUM-HIGH PRIORITY
+    'prep_lead': 70,
+    'kitchen_lead': 70,
+    
+    // General roles - NORMAL PRIORITY
+    'prep_worker': 10,
+    'kitchen_helper': 10,
+    'janitor': 10,
+    'assistant': 10,
+    'general_worker': 5
+  };
+  
+  // Check exact role title first
+  if (priorities[roleTitle]) {
+    return priorities[roleTitle];
+  }
+  
+  // Check for keywords in role title
+  const roleLower = roleTitle.toLowerCase();
+  
+  if (roleLower.includes('manager')) return 90;
+  if (roleLower.includes('driver')) return 80;
+  if (roleLower.includes('lead')) return 70;
+  
+  // Default priority
+  return 0;
+}
 
 app.post('/api/generate-schedule', async (req: any, res: any) => {
   try {
@@ -983,7 +1022,7 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       return res.status(400).json({ error: 'Schedule period ID, start date, and end date are required' });
     }
 
-    console.log('🔥 SCHEDULE GENERATION STARTED - WITH PROPER 3-DAY WORK LIMIT');
+    console.log('🔥 SCHEDULE GENERATION STARTED - WITH ROLE PRIORITIZATION');
     console.log('Period:', schedulePeriodId, 'Dates:', startDate, 'to', endDate);
 
     // Clear existing assignments for this period
@@ -1059,13 +1098,13 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
     const assignments: any[] = [];
     const conflicts: any[] = [];
 
-    // 🚨 FIXED: Track which residents worked on which DAYS (not individual shifts)
+    // Track which residents worked on which DAYS (not individual shifts)
     const weeklyWorkDays = new Map<number, Set<string>>(); // residentId -> Set of date strings
     residents.forEach(resident => {
       weeklyWorkDays.set(resident.id, new Set());
     });
 
-    console.log(`📅 Processing ${dates.length} dates with PROPER 3-day work limit enforcement`);
+    console.log(`📅 Processing ${dates.length} dates with ROLE PRIORITIZATION`);
 
     // Process each date
     for (const date of dates) {
@@ -1091,15 +1130,39 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       for (const shift of dayShifts) {
         console.log(`    🏢 Processing ${shift.department.name} - ${shift.name}`);
         
-        for (const role of shift.roles) {
-          console.log(`      🎯 Processing role: ${role.roleTitle} (need ${role.requiredCount})`);
+        // 🚨 NEW: SORT ROLES BY PRIORITY FIRST
+        const sortedRoles = shift.roles.sort((a, b) => {
+          const aPriority = getRolePriority(a.roleTitle, shift.department.name);
+          const bPriority = getRolePriority(b.roleTitle, shift.department.name);
+          
+          // Higher priority first
+          if (aPriority !== bPriority) {
+            return bPriority - aPriority; // Descending order
+          }
+          
+          // If same priority, prioritize roles requiring qualifications
+          const aHasQual = a.qualificationId ? 1 : 0;
+          const bHasQual = b.qualificationId ? 1 : 0;
+          return bHasQual - aHasQual;
+        });
+        
+        console.log(`    📋 Roles sorted by priority:`);
+        sortedRoles.forEach(role => {
+          const priority = getRolePriority(role.roleTitle, shift.department.name);
+          console.log(`      - ${role.roleTitle}: priority ${priority}`);
+        });
+        
+        for (const role of sortedRoles) {
+          const rolePriority = getRolePriority(role.roleTitle, shift.department.name);
+          
+          console.log(`      🎯 Processing role: ${role.roleTitle} (priority: ${rolePriority}, need ${role.requiredCount})`);
           
           for (let i = 0; i < role.requiredCount; i++) {
             console.log(`        👤 Looking for resident for ${role.roleTitle} (slot ${i + 1}/${role.requiredCount})`);
             
             let selectedResident = null;
             
-            // 🚨 FIXED: Check for existing team assignments but allow reuse within same day
+            // Check for existing team assignments but allow reuse within same day
             if (shift.department.name === 'shelter_runs') {
               const teamKey = `${role.roleTitle}_${i}`;
               
@@ -1130,7 +1193,7 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
             if (!selectedResident) {
               // Find eligible residents for this role
               const eligibleResidents = residents.filter(resident => {
-                // 🚨 FIXED: Only check dayUsed for NON-TEAM roles to allow multiple shelter runs per person per day
+                // Only check dayUsed for NON-TEAM roles to allow multiple shelter runs per person per day
                 const isTeamRole = (
                   shift.department.name === 'shelter_runs' ||
                   (shift.department.name === 'kitchen' && role.roleTitle === 'janitor')
@@ -1179,7 +1242,7 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
                   if (shiftStart < availStart || shiftEnd > availEnd) return false;
                 }
 
-                // 🚨 FIXED: Check 3-day weekly WORK DAYS limit (not individual shifts)
+                // Check 3-day weekly WORK DAYS limit (not individual shifts)
                 const currentWorkDays = weeklyWorkDays.get(resident.id) || new Set();
                 if (currentWorkDays.size >= 3) {
                   console.log(`🚫 3-DAY LIMIT: ${resident.firstName} ${resident.lastName} already worked ${currentWorkDays.size} days this week`);
@@ -1204,9 +1267,18 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
               console.log(`          👥 Found ${eligibleResidents.length} eligible residents`);
 
               if (eligibleResidents.length > 0) {
-                // 🚨 FIXED: Load balancing - prefer residents with fewer work DAYS
+                // 🚨 ENHANCED: Prioritize by qualifications for high-priority roles, then load balance
                 const sortedCandidates = eligibleResidents.sort((a, b) => {
-                  // First priority: number of work days (fewer is better)
+                  // For high-priority roles (priority > 50), strongly prefer qualified residents
+                  if (rolePriority > 50 && role.qualificationId) {
+                    const aHasExactQual = a.qualifications.some(rq => rq.qualificationId === role.qualificationId);
+                    const bHasExactQual = b.qualifications.some(rq => rq.qualificationId === role.qualificationId);
+                    
+                    if (aHasExactQual && !bHasExactQual) return -1;
+                    if (!aHasExactQual && bHasExactQual) return 1;
+                  }
+                  
+                  // Load balancing: prefer residents with fewer work DAYS
                   const aWorkDays = (weeklyWorkDays.get(a.id) || new Set()).size;
                   const bWorkDays = (weeklyWorkDays.get(b.id) || new Set()).size;
                   
@@ -1214,7 +1286,7 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
                     return aWorkDays - bWorkDays;
                   }
                   
-                  // Second priority: current assignments in this generation
+                  // Final tiebreaker: current assignments in this generation
                   const aAssignments = assignments.filter(assign => assign.residentId === a.id).length;
                   const bAssignments = assignments.filter(assign => assign.residentId === b.id).length;
                   return aAssignments - bAssignments;
@@ -1249,13 +1321,13 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
               
               assignments.push(assignment);
 
-              // 🚨 FIXED: Update weekly work DAYS (not individual shift counts)
+              // Update weekly work DAYS (not individual shift counts)
               const currentWorkDays = weeklyWorkDays.get(selectedResident.id) || new Set();
               currentWorkDays.add(dateStr);
               weeklyWorkDays.set(selectedResident.id, currentWorkDays);
               console.log(`📊 WORK DAYS: ${selectedResident.firstName} ${selectedResident.lastName} now has ${currentWorkDays.size} work days this week`);
               
-              // 🚨 FIXED: Mark as dayUsed only for non-team roles
+              // Mark as dayUsed only for non-team roles
               const isTeamRole = (
                 shift.department.name === 'shelter_runs' ||
                 (shift.department.name === 'kitchen' && role.roleTitle === 'janitor')
@@ -1265,28 +1337,42 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
                 dayUsed.add(selectedResident.id);
               }
               
-              console.log(`          ✅ Assigned ${selectedResident.firstName} ${selectedResident.lastName}`);
+              if (rolePriority > 50) {
+                console.log(`          ✅ HIGH PRIORITY: Assigned ${selectedResident.firstName} ${selectedResident.lastName} to ${role.roleTitle} (priority: ${rolePriority})`);
+              } else {
+                console.log(`          ✅ Assigned ${selectedResident.firstName} ${selectedResident.lastName} to ${role.roleTitle}`);
+              }
             } else {
-              // Record conflict - no eligible residents
+              // Record conflict - distinguish high-priority roles
+              const conflictType = rolePriority > 50 ? 'high_priority_role_unfilled' : 'no_eligible_residents';
+              const severity = rolePriority > 50 ? 'error' : 'warning';
+              
               const conflict = {
                 residentId: 0,
                 conflictDate: date,
-                conflictType: 'no_eligible_residents',
-                description: `No eligible residents for ${shift.department.name} - ${shift.name} - ${role.roleTitle} (slot ${i + 1}/${role.requiredCount}). May be due to 3-day work limit, qualifications, or appointments.`,
-                severity: 'error'
+                conflictType: conflictType,
+                description: `${rolePriority > 50 ? 'HIGH PRIORITY: ' : ''}No eligible residents for ${shift.department.name} - ${shift.name} - ${role.roleTitle} (priority: ${rolePriority}, slot ${i + 1}/${role.requiredCount}). May be due to 3-day work limit, qualifications, or appointments.`,
+                severity: severity
               };
               
               conflicts.push(conflict);
-              console.log(`          ❌ No eligible residents - conflict recorded`);
+              
+              if (rolePriority > 50) {
+                console.log(`          ❌ HIGH PRIORITY CONFLICT: No residents for ${role.roleTitle} (priority: ${rolePriority})`);
+              } else {
+                console.log(`          ❌ No eligible residents - conflict recorded`);
+              }
             }
           }
         }
       }
     }
 
-    // 🚨 FIXED: Log final work distribution by DAYS
+    // Log final work distribution by DAYS
     console.log(`\n📊 FINAL WORK DISTRIBUTION BY DAYS:`);
     let workDayStats = { 3: 0, 2: 0, 1: 0, 0: 0 };
+    let priorityRolesFilled = 0;
+    let priorityRolesUnfilled = 0;
     
     weeklyWorkDays.forEach((workDaySet, residentId) => {
       const workDayCount = workDaySet.size;
@@ -1299,9 +1385,28 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       }
     });
 
-    console.log(`\n📊 GENERATION COMPLETE:`);
+    // Count priority role statistics
+    assignments.forEach(assignment => {
+      const matchingShift = shifts.find(s => s.id === assignment.shiftId);
+      if (matchingShift) {
+        const priority = getRolePriority(assignment.roleTitle, matchingShift.department.name);
+        if (priority > 50) {
+          priorityRolesFilled++;
+        }
+      }
+    });
+
+    conflicts.forEach(conflict => {
+      if (conflict.conflictType === 'high_priority_role_unfilled') {
+        priorityRolesUnfilled++;
+      }
+    });
+
+    console.log(`\n📊 GENERATION COMPLETE WITH ROLE PRIORITIZATION:`);
     console.log(`📊 - Generated ${assignments.length} assignments`);
     console.log(`📊 - Found ${conflicts.length} conflicts`);
+    console.log(`📊 - High priority roles filled: ${priorityRolesFilled}`);
+    console.log(`📊 - High priority roles unfilled: ${priorityRolesUnfilled}`);
     console.log(`📊 - Residents working 3 days: ${workDayStats[3]}`);
     console.log(`📊 - Residents working 2 days: ${workDayStats[2]}`);
     console.log(`📊 - Residents working 1 day: ${workDayStats[1]}`);
@@ -1348,7 +1453,7 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       }
     }
 
-    // Return results with work distribution stats
+    // Return results with enhanced stats
     const period = await prisma.schedulePeriod.findUnique({
       where: { id: parseInt(schedulePeriodId) },
       include: {
@@ -1370,6 +1475,8 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       assignmentsCreated: actuallyCreated,
       conflictsFound: conflicts.length,
       conflictsCreated: conflictsCreated,
+      priorityRolesFilled: priorityRolesFilled,
+      priorityRolesUnfilled: priorityRolesUnfilled,
       workDistribution: workDayStats
     };
 

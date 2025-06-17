@@ -1260,12 +1260,25 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       console.log(`    🎯 Processing: ${dateStr} - ${shift.department.name} - ${shift.name} - ${role.roleTitle}`);
       console.log(`       Required qualification: ${requiredQual?.name || 'NONE'} (ID: ${role.qualificationId || 'N/A'})`);
       
+
+      console.log(`    🎯 Processing: ${dateStr} - ${shift.department.name} - ${shift.name} - ${role.roleTitle}`);
+console.log(`       Required qualification: ${requiredQual?.name || 'NONE'} (ID: ${role.qualificationId || 'N/A'})`);
+
       // Find eligible residents with required management qualification
       const eligibleResidents = residents.filter(resident => {
         const eligibility = isResidentEligible(resident, shift, role, date, dayOfWeek, dateStr);
+
+if (resident.qualifications.some(rq => rq.qualification.name === 'thrift_manager_both')) {
+    console.log(`       🔍 Checking resident ${resident.firstName} ${resident.lastName} (has thrift_manager_both):`);
+    console.log(`          Eligible: ${eligibility.eligible}, Reason: ${eligibility.reason || 'none'}`);
+    console.log(`          Current work days: ${(weeklyWorkDays.get(resident.id) || new Set()).size}`);
+  }
+
         return eligibility.eligible;
       });
 
+
+      
       if (eligibleResidents.length > 0) {
         // Sort by work balance across the week
         const sortedCandidates = eligibleResidents.sort((a, b) => {

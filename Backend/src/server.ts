@@ -1138,20 +1138,8 @@ async function generateAssignments(shifts, residents, dates, schedulePeriodId) {
         console.log(`      ${index + 1}. ${role.roleTitle} (requires: ${role.qualification?.name || 'none'}) - count: ${role.requiredCount}`);
       });
       
-      // Process roles in priority order: management first, then others
-      const managementRoles = shift.roles.filter(role => 
-        role.qualification?.name?.includes('manager') || 
-        role.roleTitle.toLowerCase().includes('manager')
-      );
-      const otherRoles = shift.roles.filter(role => 
-        !role.qualification?.name?.includes('manager') && 
-        !role.roleTitle.toLowerCase().includes('manager')
-      );
-      
-      const sortedRoles = [...managementRoles, ...otherRoles];
-      
-      // Process each role in priority order
-      for (const role of sortedRoles) {
+      // Process each role in this shift
+      for (const role of shift.roles) {
         // Create multiple assignments if requiredCount > 1
         for (let i = 0; i < role.requiredCount; i++) {
           const assignment = await assignResident(
@@ -1274,23 +1262,9 @@ function getIneligibilityReasons(resident, shift, role, date, dayOfWeek, dateStr
 
   // Check qualification requirement
   if (role.qualificationId) {
-    const hasQualification = resident.qualifications.some(rq => {
-      // Direct match
-      if (rq.qualificationId === role.qualificationId) {
-        return true;
-      }
-      
-      // Special case: thrift_manager_both covers both long_beach and san_pedro
-      if (rq.qualification.name === 'thrift_manager_both') {
-        if (role.qualification.name === 'thrift_manager_long_beach' || 
-            role.qualification.name === 'thrift_manager_san_pedro') {
-          return true;
-        }
-      }
-      
-      return false;
-    });
-    
+    const hasQualification = resident.qualifications.some(
+      rq => rq.qualificationId === role.qualificationId
+    );
     if (!hasQualification) {
       const residentQuals = resident.qualifications.map(q => q.qualification.name).join(', ');
       reasons.push(`missing qualification (has: ${residentQuals || 'none'}, needs: ${role.qualification?.name})`);
@@ -1350,23 +1324,9 @@ function isResidentEligible(resident, shift, role, date, dayOfWeek, dateStr, res
 
   // Check qualification requirement
   if (role.qualificationId) {
-    const hasQualification = resident.qualifications.some(rq => {
-      // Direct match
-      if (rq.qualificationId === role.qualificationId) {
-        return true;
-      }
-      
-      // Special case: thrift_manager_both covers both long_beach and san_pedro
-      if (rq.qualification.name === 'thrift_manager_both') {
-        if (role.qualification.name === 'thrift_manager_long_beach' || 
-            role.qualification.name === 'thrift_manager_san_pedro') {
-          return true;
-        }
-      }
-      
-      return false;
-    });
-    
+    const hasQualification = resident.qualifications.some(
+      rq => rq.qualificationId === role.qualificationId
+    );
     if (!hasQualification) {
       return false;
     }

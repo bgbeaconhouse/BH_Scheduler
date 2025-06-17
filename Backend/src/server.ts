@@ -970,6 +970,7 @@ app.post('/api/schedule-periods', async (req: any, res: any) => {
 
 
 
+// Updated schedule generation endpoint with combined thrift manager/driver logic
 app.post('/api/generate-schedule', async (req: any, res: any) => {
   try {
     const { schedulePeriodId, startDate, endDate } = req.body;
@@ -978,7 +979,7 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       return res.status(400).json({ error: 'Schedule period ID, start date, and end date are required' });
     }
 
-    console.log('🔥 WEEK-BASED SCHEDULE GENERATION STARTED');
+    console.log('🔥 WEEK-BASED SCHEDULE GENERATION STARTED (THRIFT COMBO MODE)');
     console.log('Period:', schedulePeriodId, 'Dates:', startDate, 'to', endDate);
 
     // Clear existing assignments for this period
@@ -999,9 +1000,9 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
     // Get all qualifications to identify management and driving qualifications
     const qualifications = await prisma.qualification.findMany();
     
-   const managementQualifications = qualifications.filter(q => 
-  q.name.includes('thrift_manager_') || q.name === 'thrift_manager_both'
-).map(q => q.id);
+    const managementQualifications = qualifications.filter(q => 
+      q.name.includes('thrift_manager_') || q.name === 'thrift_manager_both'
+    ).map(q => q.id);
     
     const drivingQualifications = qualifications.filter(q => 
       q.name.startsWith('driver_')
@@ -1093,15 +1094,33 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       return role.qualificationId && drivingQualifications.includes(role.qualificationId);
     }
 
+    function isThriftStoreShift(shift: any): boolean {
+      return shift.department.name === 'thrift_stores';
+    }
+
+    function hasQualification(resident: any, qualificationIds: number[]): boolean {
+      return resident.qualifications.some(rq => 
+        qualificationIds.includes(rq.qualificationId)
+      );
+    }
+
+    function canCombineThriftRoles(resident: any): boolean {
+      const hasManagement = hasQualification(resident, managementQualifications);
+      const hasDriving = hasQualification(resident, drivingQualifications);
+      return hasManagement && hasDriving;
+    }
+
     function isResidentEligible(resident: any, shift: any, role: any, date: Date, dayOfWeek: number, dateStr: string): { eligible: boolean, reason?: string } {
-      // Check if already used today (for non-team roles)
+      // Check if already used today (for non-team roles and non-thrift-combo roles)
       const isTeamRole = (
         shift.department.name === 'shelter_runs' ||
         (shift.department.name === 'kitchen' && role.roleTitle === 'janitor')
       );
       
       const dayUsed = dailyUsage.get(dateStr) || new Set();
-      if (!isTeamRole && dayUsed.has(resident.id)) {
+      
+      // SPECIAL CASE: Allow thrift store shifts to reuse the same person for multiple roles
+      if (!isTeamRole && !isThriftStoreShift(shift) && dayUsed.has(resident.id)) {
         return { eligible: false, reason: 'already_used_today' };
       }
 
@@ -1206,12 +1225,130 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
     console.log(`📊 Total role assignments needed for the week: ${allRoleAssignments.length}`);
 
     // ==========================================
-    // PHASE 1: ALL MANAGEMENT ROLES FOR THE ENTIRE WEEK
+    // PHASE 1: THRIFT STORE COMBO ASSIGNMENTS (NEW PHASE)
     // ==========================================
-    console.log(`\n🏆 PHASE 1: Assigning ALL MANAGEMENT ROLES FOR THE WEEK`);
+    console.log(`\n🏪 PHASE 1: Assigning THRIFT STORE COMBO ROLES (Manager + Driver)`);
+    
+    const thriftStoreRoles = allRoleAssignments.filter(ra => isThriftStoreShift(ra.shift));
+    
+    // Group thrift store roles by shift and date for combo assignment
+    const thriftShiftGroups = new Map<string, any[]>();
+    thriftStoreRoles.forEach(ra => {
+      const groupKey = `${ra.shift.id}_${ra.dateStr}`;
+      if (!thriftShiftGroups.has(groupKey)) {
+        thriftShiftGroups.set(groupKey, []);
+      }
+      thriftShiftGroups.get(groupKey)!.push(ra);
+    });
+
+    console.log(`    Found ${thriftShiftGroups.size} thrift store shift groups across the week`);
+
+    for (const [groupKey, roleAssignments] of thriftShiftGroups) {
+      const { shift, date, dayOfWeek, dateStr } = roleAssignments[0];
+      
+      console.log(`    🎯 Processing: ${dateStr} - ${shift.name}`);
+      
+      // Find roles within this shift group
+      const managerRoles = roleAssignments.filter(ra => isManagementRole(ra.role));
+      const driverRoles = roleAssignments.filter(ra => isDrivingRole(ra.role));
+      const otherRoles = roleAssignments.filter(ra => !isManagementRole(ra.role) && !isDrivingRole(ra.role));
+      
+      console.log(`       Manager roles: ${managerRoles.length}, Driver roles: ${driverRoles.length}, Other roles: ${otherRoles.length}`);
+      
+      // Find residents who can do both manager and driver roles
+      const comboEligibleResidents = residents.filter(resident => {
+        if (!canCombineThriftRoles(resident)) return false;
+        
+        const eligibility = isResidentEligible(resident, shift, managerRoles[0]?.role, date, dayOfWeek, dateStr);
+        return eligibility.eligible;
+      });
+
+      if (comboEligibleResidents.length > 0 && managerRoles.length > 0 && driverRoles.length > 0) {
+        // Sort combo candidates by work balance
+        const sortedComboCandidates = comboEligibleResidents.sort((a, b) => {
+          const aWorkDays = (weeklyWorkDays.get(a.id) || new Set()).size;
+          const bWorkDays = (weeklyWorkDays.get(b.id) || new Set()).size;
+          
+          if (aWorkDays !== bWorkDays) {
+            return aWorkDays - bWorkDays;
+          }
+          
+          const aAssignments = assignments.filter(assign => assign.residentId === a.id).length;
+          const bAssignments = assignments.filter(assign => assign.residentId === b.id).length;
+          return aAssignments - bAssignments;
+        });
+
+        const selectedComboResident = sortedComboCandidates[0];
+        
+        // Assign both manager and driver roles to the same person
+        const managerAssignment = {
+          schedulePeriodId: parseInt(schedulePeriodId),
+          shiftId: shift.id,
+          residentId: selectedComboResident.id,
+          assignedDate: date,
+          roleTitle: managerRoles[0].role.roleTitle,
+          status: 'scheduled'
+        };
+        
+        const driverAssignment = {
+          schedulePeriodId: parseInt(schedulePeriodId),
+          shiftId: shift.id,
+          residentId: selectedComboResident.id,
+          assignedDate: date,
+          roleTitle: driverRoles[0].role.roleTitle,
+          status: 'scheduled'
+        };
+        
+        assignments.push(managerAssignment);
+        assignments.push(driverAssignment);
+
+        // Update tracking - but only count as ONE work day since it's the same shift
+        const currentWorkDays = weeklyWorkDays.get(selectedComboResident.id) || new Set();
+        currentWorkDays.add(dateStr);
+        weeklyWorkDays.set(selectedComboResident.id, currentWorkDays);
+        
+        // Mark as used for the day (but allow multiple roles in same thrift shift)
+        const dayUsed = dailyUsage.get(dateStr) || new Set();
+        dayUsed.add(selectedComboResident.id);
+        dailyUsage.set(dateStr, dayUsed);
+        
+        console.log(`    ✅ COMBO: ${selectedComboResident.firstName} ${selectedComboResident.lastName} -> ${dateStr} ${shift.name} (Manager + Driver)`);
+        
+        // Mark these specific roles as assigned by removing them from future phases
+        const assignedManagerIndex = allRoleAssignments.findIndex(ra => 
+          ra.shift.id === shift.id && 
+          ra.dateStr === dateStr && 
+          isManagementRole(ra.role)
+        );
+        const assignedDriverIndex = allRoleAssignments.findIndex(ra => 
+          ra.shift.id === shift.id && 
+          ra.dateStr === dateStr && 
+          isDrivingRole(ra.role)
+        );
+        
+        if (assignedManagerIndex !== -1) allRoleAssignments.splice(assignedManagerIndex, 1);
+        if (assignedDriverIndex !== -1) {
+          // Need to find the index again after the first splice
+          const newDriverIndex = allRoleAssignments.findIndex(ra => 
+            ra.shift.id === shift.id && 
+            ra.dateStr === dateStr && 
+            isDrivingRole(ra.role)
+          );
+          if (newDriverIndex !== -1) allRoleAssignments.splice(newDriverIndex, 1);
+        }
+        
+      } else {
+        console.log(`    ❌ No combo-eligible residents for ${dateStr} ${shift.name}`);
+      }
+    }
+
+    // ==========================================
+    // PHASE 2: REMAINING MANAGEMENT ROLES FOR THE ENTIRE WEEK
+    // ==========================================
+    console.log(`\n🏆 PHASE 2: Assigning REMAINING MANAGEMENT ROLES FOR THE WEEK`);
     
     const weekManagementRoles = allRoleAssignments.filter(ra => isManagementRole(ra.role));
-    console.log(`    Found ${weekManagementRoles.length} management positions across the week`);
+    console.log(`    Found ${weekManagementRoles.length} remaining management positions across the week`);
 
     // Sort management roles by date to ensure good distribution
     weekManagementRoles.sort((a, b) => a.date.getTime() - b.date.getTime());
@@ -1292,9 +1429,9 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
     }
 
     // ==========================================
-    // PHASE 2: ALL DRIVING ROLES FOR THE ENTIRE WEEK
+    // PHASE 3: REMAINING DRIVING ROLES FOR THE ENTIRE WEEK
     // ==========================================
-    console.log(`\n🚗 PHASE 2: Assigning ALL DRIVING ROLES FOR THE WEEK`);
+    console.log(`\n🚗 PHASE 3: Assigning REMAINING DRIVING ROLES FOR THE WEEK`);
     
     const weekDrivingRoles = allRoleAssignments.filter(ra => {
       const requiresDrivingQual = isDrivingRole(ra.role);
@@ -1306,7 +1443,7 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       return requiresDrivingQual && !alreadyAssigned;
     });
 
-    console.log(`    Found ${weekDrivingRoles.length} driving positions across the week`);
+    console.log(`    Found ${weekDrivingRoles.length} remaining driving positions across the week`);
 
     // Sort driving roles by date for good distribution
     weekDrivingRoles.sort((a, b) => a.date.getTime() - b.date.getTime());
@@ -1424,9 +1561,9 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
     }
 
     // ==========================================
-    // PHASE 3: ALL OTHER ROLES FOR THE ENTIRE WEEK
+    // PHASE 4: ALL OTHER ROLES FOR THE ENTIRE WEEK
     // ==========================================
-    console.log(`\n📝 PHASE 3: Assigning ALL REMAINING ROLES FOR THE WEEK`);
+    console.log(`\n📝 PHASE 4: Assigning ALL REMAINING ROLES FOR THE WEEK`);
     
     const weekOtherRoles = allRoleAssignments.filter(ra => {
       const isManager = isManagementRole(ra.role);
@@ -1525,7 +1662,8 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
           (shift.department.name === 'kitchen' && role.roleTitle === 'janitor')
         );
         
-        if (!isTeamRole) {
+        // For thrift stores, allow multiple roles per person but still track daily usage
+        if (!isTeamRole && !isThriftStoreShift(shift)) {
           const dayUsed = dailyUsage.get(dateStr) || new Set();
           dayUsed.add(selectedResident.id);
           dailyUsage.set(dateStr, dayUsed);
@@ -1558,10 +1696,36 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       return matchingRole && isDrivingRole(matchingRole);
     });
 
-    console.log(`\n📊 WEEK-BASED GENERATION COMPLETE:`);
+    const thriftComboAssignments = assignments.filter(a => {
+      const matchingShift = shifts.find(s => s.id === a.shiftId);
+      return matchingShift && isThriftStoreShift(matchingShift);
+    });
+
+    // Count combo residents (people with both manager + driver roles on same shift/date)
+    const comboResidents = new Map<string, Set<string>>();
+    thriftComboAssignments.forEach(a => {
+      const key = `${a.residentId}_${a.shiftId}_${a.assignedDate.toDateString()}`;
+      if (!comboResidents.has(key)) {
+        comboResidents.set(key, new Set());
+      }
+      comboResidents.get(key)!.add(a.roleTitle);
+    });
+
+    const actualComboCount = Array.from(comboResidents.values()).filter(roleSet => 
+      roleSet.size >= 2 && 
+      Array.from(roleSet).some(role => {
+        const shift = shifts.find(s => thriftComboAssignments.find(a => a.roleTitle === role && a.shiftId === s.id));
+        const roleObj = shift?.roles.find(r => r.roleTitle === role);
+        return roleObj && (isManagementRole(roleObj) || isDrivingRole(roleObj));
+      })
+    ).length;
+
+    console.log(`\n📊 WEEK-BASED GENERATION COMPLETE (THRIFT COMBO MODE):`);
     console.log(`📊 - Total assignments: ${assignments.length}`);
     console.log(`📊 - Management assignments: ${managementAssignments.length}`);
     console.log(`📊 - Driving assignments: ${drivingAssignments.length}`);
+    console.log(`📊 - Thrift store assignments: ${thriftComboAssignments.length}`);
+    console.log(`📊 - Thrift combo residents: ${actualComboCount}`);
     console.log(`📊 - Other assignments: ${assignments.length - managementAssignments.length - drivingAssignments.length}`);
     console.log(`📊 - Total conflicts: ${conflicts.length}`);
 
@@ -1645,6 +1809,8 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       assignmentsCreated: actuallyCreated,
       managementAssignments: managementAssignments.length,
       drivingAssignments: drivingAssignments.length,
+      thriftStoreAssignments: thriftComboAssignments.length,
+      thriftComboResidents: actualComboCount,
       conflictsFound: conflicts.length,
       conflictsCreated: conflictsCreated,
       criticalConflicts: criticalConflicts.length,

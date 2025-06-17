@@ -1274,9 +1274,23 @@ function getIneligibilityReasons(resident, shift, role, date, dayOfWeek, dateStr
 
   // Check qualification requirement
   if (role.qualificationId) {
-    const hasQualification = resident.qualifications.some(
-      rq => rq.qualificationId === role.qualificationId
-    );
+    const hasQualification = resident.qualifications.some(rq => {
+      // Direct match
+      if (rq.qualificationId === role.qualificationId) {
+        return true;
+      }
+      
+      // Special case: thrift_manager_both covers both long_beach and san_pedro
+      if (rq.qualification.name === 'thrift_manager_both') {
+        if (role.qualification.name === 'thrift_manager_long_beach' || 
+            role.qualification.name === 'thrift_manager_san_pedro') {
+          return true;
+        }
+      }
+      
+      return false;
+    });
+    
     if (!hasQualification) {
       const residentQuals = resident.qualifications.map(q => q.qualification.name).join(', ');
       reasons.push(`missing qualification (has: ${residentQuals || 'none'}, needs: ${role.qualification?.name})`);
@@ -1323,10 +1337,8 @@ function getIneligibilityReasons(resident, shift, role, date, dayOfWeek, dateStr
 function isResidentEligible(resident, shift, role, date, dayOfWeek, dateStr, residentWorkDays, dailyUsage) {
   
   // Check if already worked today (basic rule)
-  // EXCEPTION: Allow thrift store workers to take multiple roles at same location
-  const isThriftStore = shift.department.name === 'thrift_stores';
   const dayUsed = dailyUsage.get(dateStr);
-  if (!isThriftStore && dayUsed.has(resident.id)) {
+  if (dayUsed.has(resident.id)) {
     return false;
   }
 
@@ -1338,9 +1350,23 @@ function isResidentEligible(resident, shift, role, date, dayOfWeek, dateStr, res
 
   // Check qualification requirement
   if (role.qualificationId) {
-    const hasQualification = resident.qualifications.some(
-      rq => rq.qualificationId === role.qualificationId
-    );
+    const hasQualification = resident.qualifications.some(rq => {
+      // Direct match
+      if (rq.qualificationId === role.qualificationId) {
+        return true;
+      }
+      
+      // Special case: thrift_manager_both covers both long_beach and san_pedro
+      if (rq.qualification.name === 'thrift_manager_both') {
+        if (role.qualification.name === 'thrift_manager_long_beach' || 
+            role.qualification.name === 'thrift_manager_san_pedro') {
+          return true;
+        }
+      }
+      
+      return false;
+    });
+    
     if (!hasQualification) {
       return false;
     }

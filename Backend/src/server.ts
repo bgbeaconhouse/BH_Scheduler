@@ -1409,13 +1409,14 @@ if (resident.qualifications.some(rq => rq.qualification.name === 'thrift_manager
 
           selectedResident = sortedCandidates[0];
           
-          // Remember team member
-          if (shift.department.name === 'shelter_runs') {
-            const teamKey = `${role.roleTitle}_${slotIndex}`;
-            const dayTeams = weeklyTeams.get(dateStr) || new Map();
-            dayTeams.set(teamKey, selectedResident.id);
-            weeklyTeams.set(dateStr, dayTeams);
-          }
+       // Remember team member for shelter runs and kitchen janitors
+if (shift.department.name === 'shelter_runs' || 
+    (shift.department.name === 'kitchen' && role.roleTitle === 'janitor')) {
+  const teamKey = `${shift.department.name}_${role.roleTitle}_${slotIndex}`;
+  const dayTeams = weeklyTeams.get(dateStr) || new Map();
+  dayTeams.set(teamKey, selectedResident.id);
+  weeklyTeams.set(dateStr, dayTeams);
+}
         }
       }
       
@@ -1489,10 +1490,11 @@ if (resident.qualifications.some(rq => rq.qualification.name === 'thrift_manager
       
       let selectedResident = null;
       
-      // Check for existing team assignments from previous phases
-      if (shift.department.name === 'shelter_runs') {
-        const teamKey = `${role.roleTitle}_${slotIndex}`;
-        const dayTeams = weeklyTeams.get(dateStr) || new Map();
+      // Check for existing team assignments from // Check for existing team assignments from previous phases
+if (shift.department.name === 'shelter_runs' || 
+    (shift.department.name === 'kitchen' && role.roleTitle === 'janitor')) {
+  const teamKey = `${shift.department.name}_${role.roleTitle}_${slotIndex}`;
+  const dayTeams = weeklyTeams.get(dateStr) || new Map();
         
         if (dayTeams.has(teamKey)) {
           const existingResidentId = dayTeams.get(teamKey)!;
@@ -1531,12 +1533,13 @@ if (resident.qualifications.some(rq => rq.qualification.name === 'thrift_manager
           selectedResident = sortedCandidates[0];
           
           // Remember team member for consistency
-          if (shift.department.name === 'shelter_runs') {
-            const teamKey = `${role.roleTitle}_${slotIndex}`;
-            const dayTeams = weeklyTeams.get(dateStr) || new Map();
-            dayTeams.set(teamKey, selectedResident.id);
-            weeklyTeams.set(dateStr, dayTeams);
-          }
+if (shift.department.name === 'shelter_runs' || 
+    (shift.department.name === 'kitchen' && role.roleTitle === 'janitor')) {
+  const teamKey = `${shift.department.name}_${role.roleTitle}_${slotIndex}`;
+  const dayTeams = weeklyTeams.get(dateStr) || new Map();
+  dayTeams.set(teamKey, selectedResident.id);
+  weeklyTeams.set(dateStr, dayTeams);
+}
         }
       }
       

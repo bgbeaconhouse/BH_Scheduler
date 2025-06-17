@@ -978,7 +978,7 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       return res.status(400).json({ error: 'Schedule period ID, start date, and end date are required' });
     }
 
-    console.log('🔥 WEEK-BASED SCHEDULE GENERATION STARTED');
+    console.log('🔥 ENHANCED WEEK-BASED SCHEDULE GENERATION STARTED');
     console.log('Period:', schedulePeriodId, 'Dates:', startDate, 'to', endDate);
 
     // Clear existing assignments for this period
@@ -1082,7 +1082,7 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       dailyUsage.set(dateStr, new Set());
     });
 
-    console.log(`📅 Processing ${dates.length} dates with WEEK-BASED ASSIGNMENT`);
+    console.log(`📅 Processing ${dates.length} dates with ENHANCED WEEK-BASED ASSIGNMENT`);
 
     // Helper functions
     function isManagementRole(role: any): boolean {
@@ -1169,9 +1169,9 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
     }
 
     // ==========================================
-    // COLLECT ALL ROLE ASSIGNMENTS FOR THE ENTIRE WEEK
+    // STEP 1: COLLECT ALL ROLE ASSIGNMENTS FOR THE ENTIRE WEEK
     // ==========================================
-    console.log(`\n📋 COLLECTING ALL ROLE ASSIGNMENTS FOR THE WEEK`);
+    console.log(`\n📋 STEP 1: COLLECTING ALL ROLE ASSIGNMENTS FOR THE WEEK`);
     
     const allRoleAssignments: any[] = [];
     
@@ -1196,7 +1196,8 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
               dayOfWeek,
               dateStr,
               slotIndex: i,
-              assignmentKey: `${shift.id}_${role.roleTitle}_${date.toISOString()}_${i}`
+              assignmentKey: `${shift.id}_${role.roleTitle}_${date.toISOString()}_${i}`,
+              priority: isManagementRole(role) ? 1 : (isDrivingRole(role) ? 2 : 3)
             });
           }
         });
@@ -1206,43 +1207,64 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
     console.log(`📊 Total role assignments needed for the week: ${allRoleAssignments.length}`);
 
     // ==========================================
-    // PHASE 1: ALL MANAGEMENT ROLES FOR THE ENTIRE WEEK
+    // STEP 2: SEPARATE ROLES BY PRIORITY AND SORT STRATEGICALLY
     // ==========================================
-    console.log(`\n🏆 PHASE 1: Assigning ALL MANAGEMENT ROLES FOR THE WEEK`);
+    console.log(`\n🎯 STEP 2: SEPARATING ROLES BY PRIORITY`);
+
+    // Separate roles by priority
+    const managementRoles = allRoleAssignments.filter(ra => isManagementRole(ra.role));
+    const drivingRoles = allRoleAssignments.filter(ra => isDrivingRole(ra.role));
+    const otherRoles = allRoleAssignments.filter(ra => !isManagementRole(ra.role) && !isDrivingRole(ra.role));
+
+    console.log(`📊 Management roles across week: ${managementRoles.length}`);
+    console.log(`📊 Driving roles across week: ${drivingRoles.length}`);
+    console.log(`📊 Other roles across week: ${otherRoles.length}`);
+
+    // Sort each category by date to ensure even distribution across the week
+    const sortByDateAndPriority = (a: any, b: any) => {
+      // First sort by date
+      const dateCompare = a.date.getTime() - b.date.getTime();
+      if (dateCompare !== 0) return dateCompare;
+      
+      // Then by department priority (higher priority first)
+      const aPriority = a.shift.department.priority || 0;
+      const bPriority = b.shift.department.priority || 0;
+      if (aPriority !== bPriority) return bPriority - aPriority;
+      
+      // Finally by shift start time
+      return a.shift.startTime.localeCompare(b.shift.startTime);
+    };
+
+    managementRoles.sort(sortByDateAndPriority);
+    drivingRoles.sort(sortByDateAndPriority);
+    otherRoles.sort(sortByDateAndPriority);
+
+    // Track teams across the week for consistency
+    const weeklyTeams = new Map<string, Map<string, number>>(); // dateStr -> teamKey -> residentId
+
+    // ==========================================
+    // STEP 3: ASSIGN ALL MANAGEMENT ROLES FIRST (WEEK-WIDE PRIORITY)
+    // ==========================================
+    console.log(`\n🏆 STEP 3: ASSIGNING ALL MANAGEMENT ROLES (HIGHEST PRIORITY)`);
     
-    const weekManagementRoles = allRoleAssignments.filter(ra => isManagementRole(ra.role));
-    console.log(`    Found ${weekManagementRoles.length} management positions across the week`);
-
-    // Sort management roles by date to ensure good distribution
-    weekManagementRoles.sort((a, b) => a.date.getTime() - b.date.getTime());
-
-    for (const roleAssignment of weekManagementRoles) {
+    for (const roleAssignment of managementRoles) {
       const { shift, role, date, dayOfWeek, dateStr, slotIndex } = roleAssignment;
       
-      console.log(`    🎯 Processing: ${dateStr} - ${shift.department.name} - ${role.roleTitle} (requires: ${role.qualification?.name})`);
+      console.log(`    🎯 MANAGEMENT: ${dateStr} - ${shift.department.name} - ${role.roleTitle} (requires: ${role.qualification?.name})`);
       
       // Find eligible residents with required management qualification
       const eligibleResidents = residents.filter(resident => {
         const eligibility = isResidentEligible(resident, shift, role, date, dayOfWeek, dateStr);
-        
-        if (eligibility.eligible && role.qualificationId) {
-          const hasRequiredQual = resident.qualifications.some(
-            rq => rq.qualificationId === role.qualificationId
-          );
-          if (!hasRequiredQual) {
-            return false;
-          }
-        }
-        
         return eligibility.eligible;
       });
 
       if (eligibleResidents.length > 0) {
-        // Sort by work balance across the week
+        // Sort candidates by work balance across the week (prefer those with fewer work days)
         const sortedCandidates = eligibleResidents.sort((a, b) => {
           const aWorkDays = (weeklyWorkDays.get(a.id) || new Set()).size;
           const bWorkDays = (weeklyWorkDays.get(b.id) || new Set()).size;
           
+          // Prefer residents with fewer work days
           if (aWorkDays !== bWorkDays) {
             return aWorkDays - bWorkDays;
           }
@@ -1276,9 +1298,9 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
         dayUsed.add(selectedResident.id);
         dailyUsage.set(dateStr, dayUsed);
         
-        console.log(`    ✅ MANAGER: ${selectedResident.firstName} ${selectedResident.lastName} -> ${dateStr} ${shift.department.name} (${currentWorkDays.size} work days)`);
+        console.log(`    ✅ MANAGER ASSIGNED: ${selectedResident.firstName} ${selectedResident.lastName} -> ${dateStr} ${shift.department.name} (now ${currentWorkDays.size} work days)`);
       } else {
-        // Critical conflict
+        // Critical conflict - no manager available
         const conflict = {
           residentId: 0,
           conflictDate: date,
@@ -1287,41 +1309,23 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
           severity: 'error'
         };
         conflicts.push(conflict);
-        console.log(`    ❌ CRITICAL: No manager for ${dateStr} ${shift.department.name} - ${role.roleTitle}`);
+        console.log(`    ❌ CRITICAL: No manager available for ${dateStr} ${shift.department.name} - ${role.roleTitle}`);
       }
     }
 
     // ==========================================
-    // PHASE 2: ALL DRIVING ROLES FOR THE ENTIRE WEEK
+    // STEP 4: ASSIGN ALL DRIVING ROLES SECOND (WEEK-WIDE PRIORITY)
     // ==========================================
-    console.log(`\n🚗 PHASE 2: Assigning ALL DRIVING ROLES FOR THE WEEK`);
+    console.log(`\n🚗 STEP 4: ASSIGNING ALL DRIVING ROLES (SECOND PRIORITY)`);
     
-    const weekDrivingRoles = allRoleAssignments.filter(ra => {
-      const requiresDrivingQual = isDrivingRole(ra.role);
-      const alreadyAssigned = assignments.some(a => 
-        a.shiftId === ra.shift.id && 
-        a.roleTitle === ra.role.roleTitle && 
-        a.assignedDate.toDateString() === ra.date.toDateString()
-      );
-      return requiresDrivingQual && !alreadyAssigned;
-    });
-
-    console.log(`    Found ${weekDrivingRoles.length} driving positions across the week`);
-
-    // Sort driving roles by date for good distribution
-    weekDrivingRoles.sort((a, b) => a.date.getTime() - b.date.getTime());
-
-    // Track teams across the week for consistency
-    const weeklyTeams = new Map<string, Map<string, number>>(); // dateStr -> teamKey -> residentId
-
-    for (const roleAssignment of weekDrivingRoles) {
+    for (const roleAssignment of drivingRoles) {
       const { shift, role, date, dayOfWeek, dateStr, slotIndex } = roleAssignment;
       
-      console.log(`    🎯 Processing: ${dateStr} - ${shift.department.name} - ${role.roleTitle} (requires: ${role.qualification?.name})`);
+      console.log(`    🎯 DRIVING: ${dateStr} - ${shift.department.name} - ${role.roleTitle} (requires: ${role.qualification?.name})`);
       
       let selectedResident = null;
       
-      // Check for team consistency (shelter runs)
+      // Check for team consistency (shelter runs need consistent teams)
       if (shift.department.name === 'shelter_runs') {
         const teamKey = `${role.roleTitle}_${slotIndex}`;
         const dayTeams = weeklyTeams.get(dateStr) || new Map();
@@ -1344,20 +1348,11 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       if (!selectedResident) {
         const eligibleResidents = residents.filter(resident => {
           const eligibility = isResidentEligible(resident, shift, role, date, dayOfWeek, dateStr);
-          
-          if (eligibility.eligible && role.qualificationId) {
-            const hasRequiredQual = resident.qualifications.some(
-              rq => rq.qualificationId === role.qualificationId
-            );
-            if (!hasRequiredQual) {
-              return false;
-            }
-          }
-          
           return eligibility.eligible;
         });
 
         if (eligibleResidents.length > 0) {
+          // Sort by work balance (prefer those with fewer work days)
           const sortedCandidates = eligibleResidents.sort((a, b) => {
             const aWorkDays = (weeklyWorkDays.get(a.id) || new Set()).size;
             const bWorkDays = (weeklyWorkDays.get(b.id) || new Set()).size;
@@ -1373,7 +1368,7 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
 
           selectedResident = sortedCandidates[0];
           
-          // Remember team member
+          // Remember team member for consistency
           if (shift.department.name === 'shelter_runs') {
             const teamKey = `${role.roleTitle}_${slotIndex}`;
             const dayTeams = weeklyTeams.get(dateStr) || new Map();
@@ -1408,9 +1403,9 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
           dailyUsage.set(dateStr, dayUsed);
         }
         
-        console.log(`    ✅ DRIVER: ${selectedResident.firstName} ${selectedResident.lastName} -> ${dateStr} ${shift.department.name} (${currentWorkDays.size} work days)`);
+        console.log(`    ✅ DRIVER ASSIGNED: ${selectedResident.firstName} ${selectedResident.lastName} -> ${dateStr} ${shift.department.name} (now ${currentWorkDays.size} work days)`);
       } else {
-        // High priority conflict
+        // High priority conflict - no driver available
         const conflict = {
           residentId: 0,
           conflictDate: date,
@@ -1419,34 +1414,16 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
           severity: 'error'
         };
         conflicts.push(conflict);
-        console.log(`    ❌ HIGH PRIORITY: No driver for ${dateStr} ${shift.department.name} - ${role.roleTitle}`);
+        console.log(`    ❌ HIGH PRIORITY: No driver available for ${dateStr} ${shift.department.name} - ${role.roleTitle}`);
       }
     }
 
     // ==========================================
-    // PHASE 3: ALL OTHER ROLES FOR THE ENTIRE WEEK
+    // STEP 5: ASSIGN ALL OTHER ROLES LAST (LOWEST PRIORITY)
     // ==========================================
-    console.log(`\n📝 PHASE 3: Assigning ALL REMAINING ROLES FOR THE WEEK`);
+    console.log(`\n📝 STEP 5: ASSIGNING ALL OTHER ROLES (LOWEST PRIORITY)`);
     
-    const weekOtherRoles = allRoleAssignments.filter(ra => {
-      const isManager = isManagementRole(ra.role);
-      const isDriver = isDrivingRole(ra.role);
-      
-      const alreadyAssigned = assignments.some(a => 
-        a.shiftId === ra.shift.id && 
-        a.roleTitle === ra.role.roleTitle && 
-        a.assignedDate.toDateString() === ra.date.toDateString()
-      );
-      
-      return !isManager && !isDriver && !alreadyAssigned;
-    });
-
-    console.log(`    Found ${weekOtherRoles.length} remaining positions across the week`);
-
-    // Sort other roles by date for good distribution
-    weekOtherRoles.sort((a, b) => a.date.getTime() - b.date.getTime());
-
-    for (const roleAssignment of weekOtherRoles) {
+    for (const roleAssignment of otherRoles) {
       const { shift, role, date, dayOfWeek, dateStr, slotIndex } = roleAssignment;
       
       let selectedResident = null;
@@ -1477,6 +1454,7 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
         });
 
         if (eligibleResidents.length > 0) {
+          // Sort by work balance (prefer those with fewer work days)
           const sortedCandidates = eligibleResidents.sort((a, b) => {
             const aWorkDays = (weeklyWorkDays.get(a.id) || new Set()).size;
             const bWorkDays = (weeklyWorkDays.get(b.id) || new Set()).size;
@@ -1531,7 +1509,7 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
           dailyUsage.set(dateStr, dayUsed);
         }
         
-        console.log(`    ✅ Assigned ${selectedResident.firstName} ${selectedResident.lastName} -> ${dateStr} ${shift.department.name} - ${role.roleTitle} (${currentWorkDays.size} work days)`);
+        console.log(`    ✅ OTHER ASSIGNED: ${selectedResident.firstName} ${selectedResident.lastName} -> ${dateStr} ${shift.department.name} - ${role.roleTitle} (now ${currentWorkDays.size} work days)`);
       } else {
         // Regular conflict
         const conflict = {
@@ -1542,10 +1520,13 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
           severity: 'warning'
         };
         conflicts.push(conflict);
+        console.log(`    ⚠️ No eligible residents for ${dateStr} ${shift.department.name} - ${role.roleTitle}`);
       }
     }
 
-    // Log final statistics
+    // ==========================================
+    // FINAL STATISTICS AND RESULTS
+    // ==========================================
     const managementAssignments = assignments.filter(a => {
       const matchingShift = shifts.find(s => s.id === a.shiftId);
       const matchingRole = matchingShift?.roles.find(r => r.roleTitle === a.roleTitle);
@@ -1558,11 +1539,11 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       return matchingRole && isDrivingRole(matchingRole);
     });
 
-    console.log(`\n📊 WEEK-BASED GENERATION COMPLETE:`);
+    console.log(`\n📊 ENHANCED WEEK-BASED GENERATION COMPLETE:`);
     console.log(`📊 - Total assignments: ${assignments.length}`);
-    console.log(`📊 - Management assignments: ${managementAssignments.length}`);
-    console.log(`📊 - Driving assignments: ${drivingAssignments.length}`);
-    console.log(`📊 - Other assignments: ${assignments.length - managementAssignments.length - drivingAssignments.length}`);
+    console.log(`📊 - Management assignments: ${managementAssignments.length}/${managementRoles.length} (${Math.round(managementAssignments.length/managementRoles.length*100)}% filled)`);
+    console.log(`📊 - Driving assignments: ${drivingAssignments.length}/${drivingRoles.length} (${Math.round(drivingAssignments.length/drivingRoles.length*100)}% filled)`);
+    console.log(`📊 - Other assignments: ${assignments.length - managementAssignments.length - drivingAssignments.length}/${otherRoles.length} (${Math.round((assignments.length - managementAssignments.length - drivingAssignments.length)/otherRoles.length*100)}% filled)`);
     console.log(`📊 - Total conflicts: ${conflicts.length}`);
 
     const criticalConflicts = conflicts.filter(c => c.severity === 'error');
@@ -1572,17 +1553,22 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
     console.log(`📊 - Warning conflicts: ${warningConflicts.length}`);
 
     // Log work distribution
+    console.log(`\n👥 WORK DISTRIBUTION ACROSS THE WEEK:`);
     let workDayStats = { 3: 0, 2: 0, 1: 0, 0: 0 };
     weeklyWorkDays.forEach((workDaySet, residentId) => {
       const workDayCount = workDaySet.size;
+      const resident = residents.find(r => r.id === residentId);
       if (workDayCount > 0) {
-        const resident = residents.find(r => r.id === residentId);
         console.log(`📊 - ${resident?.firstName} ${resident?.lastName}: ${workDayCount} work days`);
-        workDayStats[workDayCount as keyof typeof workDayStats] = (workDayStats[workDayCount as keyof typeof workDayStats] || 0) + 1;
-      } else {
-        workDayStats[0]++;
       }
+      workDayStats[workDayCount as keyof typeof workDayStats] = (workDayStats[workDayCount as keyof typeof workDayStats] || 0) + 1;
     });
+
+    console.log(`\n📈 WORK DAY STATISTICS:`);
+    console.log(`📊 - Residents with 3 work days: ${workDayStats[3]}`);
+    console.log(`📊 - Residents with 2 work days: ${workDayStats[2]}`);
+    console.log(`📊 - Residents with 1 work day: ${workDayStats[1]}`);
+    console.log(`📊 - Residents with 0 work days: ${workDayStats[0]}`);
 
     // Create all assignments
     let actuallyCreated = 0;
@@ -1644,7 +1630,14 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       assignmentsGenerated: assignments.length,
       assignmentsCreated: actuallyCreated,
       managementAssignments: managementAssignments.length,
+      managementNeeded: managementRoles.length,
+      managementFillRate: Math.round(managementAssignments.length/managementRoles.length*100),
       drivingAssignments: drivingAssignments.length,
+      drivingNeeded: drivingRoles.length,
+      drivingFillRate: Math.round(drivingAssignments.length/drivingRoles.length*100),
+      otherAssignments: assignments.length - managementAssignments.length - drivingAssignments.length,
+      otherNeeded: otherRoles.length,
+      otherFillRate: Math.round((assignments.length - managementAssignments.length - drivingAssignments.length)/otherRoles.length*100),
       conflictsFound: conflicts.length,
       conflictsCreated: conflictsCreated,
       criticalConflicts: criticalConflicts.length,
@@ -1652,10 +1645,17 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       workDistribution: workDayStats
     };
 
+    console.log(`\n🎉 SCHEDULE GENERATION SUMMARY:`);
+    console.log(`🎉 - Management positions filled: ${finalStats.managementFillRate}% (${finalStats.managementAssignments}/${finalStats.managementNeeded})`);
+    console.log(`🎉 - Driving positions filled: ${finalStats.drivingFillRate}% (${finalStats.drivingAssignments}/${finalStats.drivingNeeded})`);
+    console.log(`🎉 - Other positions filled: ${finalStats.otherFillRate}% (${finalStats.otherAssignments}/${finalStats.otherNeeded})`);
+    console.log(`🎉 - Overall success rate: ${Math.round(actuallyCreated/allRoleAssignments.length*100)}%`);
+
     res.json({
       success: true,
       period,
-      stats: finalStats
+      stats: finalStats,
+      message: `Schedule generated successfully! Management: ${finalStats.managementFillRate}%, Driving: ${finalStats.drivingFillRate}%, Other: ${finalStats.otherFillRate}%`
     });
 
   } catch (error: any) {

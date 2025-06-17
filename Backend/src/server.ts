@@ -970,6 +970,9 @@ app.post('/api/schedule-periods', async (req: any, res: any) => {
 
 
 
+// Complete Enhanced Schedule Generation API with all 3 phases
+// Replace your entire /api/generate-schedule route with this version
+
 app.post('/api/generate-schedule', async (req: any, res: any) => {
   try {
     const { schedulePeriodId, startDate, endDate } = req.body;
@@ -978,7 +981,7 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       return res.status(400).json({ error: 'Schedule period ID, start date, and end date are required' });
     }
 
-    console.log('🔥 WEEK-BASED SCHEDULE GENERATION STARTED');
+    console.log('🔥 COMPLETE ENHANCED WEEK-BASED SCHEDULE GENERATION STARTED');
     console.log('Period:', schedulePeriodId, 'Dates:', startDate, 'to', endDate);
 
     // Clear existing assignments for this period
@@ -999,16 +1002,19 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
     // Get all qualifications to identify management and driving qualifications
     const qualifications = await prisma.qualification.findMany();
     
+    // ENHANCED: More flexible management qualification detection
     const managementQualifications = qualifications.filter(q => 
-      q.name.includes('thrift_manager_')
+      q.name.startsWith('thrift_manager') // Catches thrift_manager_san_pedro, thrift_manager_long_beach, thrift_manager_both
     ).map(q => q.id);
     
     const drivingQualifications = qualifications.filter(q => 
       q.name.startsWith('driver_')
     ).map(q => q.id);
 
-    console.log('🎯 DETECTED QUALIFICATIONS:');
+    console.log('🎯 ENHANCED QUALIFICATION DETECTION:');
+    console.log(`   Management qualifications found:`, qualifications.filter(q => q.name.startsWith('thrift_manager')).map(q => `${q.name} (ID: ${q.id})`));
     console.log(`   Management qualification IDs: ${managementQualifications}`);
+    console.log(`   Driving qualifications found:`, qualifications.filter(q => q.name.startsWith('driver_')).map(q => `${q.name} (ID: ${q.id})`));
     console.log(`   Driving qualification IDs: ${drivingQualifications}`);
 
     // Get all active shifts with their requirements
@@ -1082,17 +1088,34 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       dailyUsage.set(dateStr, new Set());
     });
 
-    console.log(`📅 Processing ${dates.length} dates with WEEK-BASED ASSIGNMENT`);
+    console.log(`📅 Processing ${dates.length} dates with ENHANCED WEEK-BASED ASSIGNMENT`);
 
-    // Helper functions
+    // ENHANCED: Improved helper functions
     function isManagementRole(role: any): boolean {
-      return role.qualificationId && managementQualifications.includes(role.qualificationId);
+      // Primary check: qualification-based
+      if (role.qualificationId && managementQualifications.includes(role.qualificationId)) {
+        return true;
+      }
+      
+      // Secondary check: role title-based (backup detection)
+      const managerTitles = ['manager', 'store_manager', 'thrift_manager'];
+      const isManagerByTitle = managerTitles.some(title => 
+        role.roleTitle.toLowerCase().includes(title.toLowerCase())
+      );
+      
+      if (isManagerByTitle) {
+        console.log(`    🎯 DETECTED MANAGER BY TITLE: ${role.roleTitle} (no qualification specified)`);
+        return true;
+      }
+      
+      return false;
     }
 
     function isDrivingRole(role: any): boolean {
       return role.qualificationId && drivingQualifications.includes(role.qualificationId);
     }
 
+    // ENHANCED: Improved resident eligibility check with "both" qualification support
     function isResidentEligible(resident: any, shift: any, role: any, date: Date, dayOfWeek: number, dateStr: string): { eligible: boolean, reason?: string } {
       // Check if already used today (for non-team roles)
       const isTeamRole = (
@@ -1125,13 +1148,27 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
         }
       }
 
-      // Check qualification requirement
+      // ENHANCED: Improved qualification requirement check
       if (role.qualificationId) {
-        const hasQualification = resident.qualifications.some(
+        const requiredQual = qualifications.find(q => q.id === role.qualificationId);
+        const hasDirectQualification = resident.qualifications.some(
           rq => rq.qualificationId === role.qualificationId
         );
-        if (!hasQualification) {
-          return { eligible: false, reason: 'missing_qualification' };
+        
+        if (hasDirectQualification) {
+          // Resident has the exact required qualification
+        } else {
+          // Check for "both" qualification for store-specific manager roles
+          if (requiredQual && (requiredQual.name === 'thrift_manager_san_pedro' || requiredQual.name === 'thrift_manager_long_beach')) {
+            const bothQual = qualifications.find(q => q.name === 'thrift_manager_both');
+            const hasBothQualification = bothQual && resident.qualifications.some(rq => rq.qualificationId === bothQual.id);
+            
+            if (!hasBothQualification) {
+              return { eligible: false, reason: 'missing_qualification' };
+            }
+          } else {
+            return { eligible: false, reason: 'missing_qualification' };
+          }
         }
       }
 
@@ -1206,9 +1243,9 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
     console.log(`📊 Total role assignments needed for the week: ${allRoleAssignments.length}`);
 
     // ==========================================
-    // PHASE 1: ALL MANAGEMENT ROLES FOR THE ENTIRE WEEK
+    // PHASE 1: ALL MANAGEMENT ROLES FOR THE ENTIRE WEEK (ENHANCED)
     // ==========================================
-    console.log(`\n🏆 PHASE 1: Assigning ALL MANAGEMENT ROLES FOR THE WEEK`);
+    console.log(`\n🏆 PHASE 1: ENHANCED MANAGEMENT ROLE ASSIGNMENT`);
     
     const weekManagementRoles = allRoleAssignments.filter(ra => isManagementRole(ra.role));
     console.log(`    Found ${weekManagementRoles.length} management positions across the week`);
@@ -1219,21 +1256,13 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
     for (const roleAssignment of weekManagementRoles) {
       const { shift, role, date, dayOfWeek, dateStr, slotIndex } = roleAssignment;
       
-      console.log(`    🎯 Processing: ${dateStr} - ${shift.department.name} - ${role.roleTitle} (requires: ${role.qualification?.name})`);
+      const requiredQual = role.qualificationId ? qualifications.find(q => q.id === role.qualificationId) : null;
+      console.log(`    🎯 Processing: ${dateStr} - ${shift.department.name} - ${shift.name} - ${role.roleTitle}`);
+      console.log(`       Required qualification: ${requiredQual?.name || 'NONE'} (ID: ${role.qualificationId || 'N/A'})`);
       
       // Find eligible residents with required management qualification
       const eligibleResidents = residents.filter(resident => {
         const eligibility = isResidentEligible(resident, shift, role, date, dayOfWeek, dateStr);
-        
-        if (eligibility.eligible && role.qualificationId) {
-          const hasRequiredQual = resident.qualifications.some(
-            rq => rq.qualificationId === role.qualificationId
-          );
-          if (!hasRequiredQual) {
-            return false;
-          }
-        }
-        
         return eligibility.eligible;
       });
 
@@ -1276,25 +1305,25 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
         dayUsed.add(selectedResident.id);
         dailyUsage.set(dateStr, dayUsed);
         
-        console.log(`    ✅ MANAGER: ${selectedResident.firstName} ${selectedResident.lastName} -> ${dateStr} ${shift.department.name} (${currentWorkDays.size} work days)`);
+        console.log(`    ✅ MANAGER ASSIGNED: ${selectedResident.firstName} ${selectedResident.lastName} -> ${dateStr} ${shift.department.name} - ${shift.name} (${currentWorkDays.size} work days)`);
       } else {
-        // Critical conflict
+        // Critical conflict - no managers available
         const conflict = {
           residentId: 0,
           conflictDate: date,
           conflictType: 'critical_manager_unfilled',
-          description: `CRITICAL: No eligible residents for MANAGEMENT role ${shift.department.name} - ${shift.name} - ${role.roleTitle} on ${dateStr} (requires ${role.qualification?.name})`,
+          description: `CRITICAL: No eligible residents for MANAGEMENT role ${shift.department.name} - ${shift.name} - ${role.roleTitle} on ${dateStr} (requires ${requiredQual?.name || 'no qualification'})`,
           severity: 'error'
         };
         conflicts.push(conflict);
-        console.log(`    ❌ CRITICAL: No manager for ${dateStr} ${shift.department.name} - ${role.roleTitle}`);
+        console.log(`    ❌ CRITICAL: No manager available for ${dateStr} ${shift.department.name} - ${shift.name} - ${role.roleTitle}`);
       }
     }
 
     // ==========================================
-    // PHASE 2: ALL DRIVING ROLES FOR THE ENTIRE WEEK
+    // PHASE 2: ALL DRIVING ROLES FOR THE ENTIRE WEEK (ENHANCED)
     // ==========================================
-    console.log(`\n🚗 PHASE 2: Assigning ALL DRIVING ROLES FOR THE WEEK`);
+    console.log(`\n🚗 PHASE 2: ENHANCED DRIVING ROLE ASSIGNMENT`);
     
     const weekDrivingRoles = allRoleAssignments.filter(ra => {
       const requiresDrivingQual = isDrivingRole(ra.role);
@@ -1317,7 +1346,9 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
     for (const roleAssignment of weekDrivingRoles) {
       const { shift, role, date, dayOfWeek, dateStr, slotIndex } = roleAssignment;
       
-      console.log(`    🎯 Processing: ${dateStr} - ${shift.department.name} - ${role.roleTitle} (requires: ${role.qualification?.name})`);
+      const requiredQual = role.qualificationId ? qualifications.find(q => q.id === role.qualificationId) : null;
+      console.log(`    🎯 Processing: ${dateStr} - ${shift.department.name} - ${shift.name} - ${role.roleTitle}`);
+      console.log(`       Required qualification: ${requiredQual?.name || 'NONE'} (ID: ${role.qualificationId || 'N/A'})`);
       
       let selectedResident = null;
       
@@ -1344,16 +1375,6 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       if (!selectedResident) {
         const eligibleResidents = residents.filter(resident => {
           const eligibility = isResidentEligible(resident, shift, role, date, dayOfWeek, dateStr);
-          
-          if (eligibility.eligible && role.qualificationId) {
-            const hasRequiredQual = resident.qualifications.some(
-              rq => rq.qualificationId === role.qualificationId
-            );
-            if (!hasRequiredQual) {
-              return false;
-            }
-          }
-          
           return eligibility.eligible;
         });
 
@@ -1408,25 +1429,25 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
           dailyUsage.set(dateStr, dayUsed);
         }
         
-        console.log(`    ✅ DRIVER: ${selectedResident.firstName} ${selectedResident.lastName} -> ${dateStr} ${shift.department.name} (${currentWorkDays.size} work days)`);
+        console.log(`    ✅ DRIVER ASSIGNED: ${selectedResident.firstName} ${selectedResident.lastName} -> ${dateStr} ${shift.department.name} - ${shift.name} (${currentWorkDays.size} work days)`);
       } else {
         // High priority conflict
         const conflict = {
           residentId: 0,
           conflictDate: date,
           conflictType: 'high_priority_driver_unfilled',
-          description: `HIGH PRIORITY: No eligible residents for DRIVING role ${shift.department.name} - ${shift.name} - ${role.roleTitle} on ${dateStr} (requires ${role.qualification?.name})`,
+          description: `HIGH PRIORITY: No eligible residents for DRIVING role ${shift.department.name} - ${shift.name} - ${role.roleTitle} on ${dateStr} (requires ${requiredQual?.name || 'no qualification'})`,
           severity: 'error'
         };
         conflicts.push(conflict);
-        console.log(`    ❌ HIGH PRIORITY: No driver for ${dateStr} ${shift.department.name} - ${role.roleTitle}`);
+        console.log(`    ❌ HIGH PRIORITY: No driver for ${dateStr} ${shift.department.name} - ${shift.name} - ${role.roleTitle}`);
       }
     }
 
     // ==========================================
-    // PHASE 3: ALL OTHER ROLES FOR THE ENTIRE WEEK
+    // PHASE 3: ALL OTHER ROLES FOR THE ENTIRE WEEK (ENHANCED)
     // ==========================================
-    console.log(`\n📝 PHASE 3: Assigning ALL REMAINING ROLES FOR THE WEEK`);
+    console.log(`\n📝 PHASE 3: ENHANCED OTHER ROLE ASSIGNMENT`);
     
     const weekOtherRoles = allRoleAssignments.filter(ra => {
       const isManager = isManagementRole(ra.role);
@@ -1448,6 +1469,8 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
 
     for (const roleAssignment of weekOtherRoles) {
       const { shift, role, date, dayOfWeek, dateStr, slotIndex } = roleAssignment;
+      
+      const requiredQual = role.qualificationId ? qualifications.find(q => q.id === role.qualificationId) : null;
       
       let selectedResident = null;
       
@@ -1531,21 +1554,24 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
           dailyUsage.set(dateStr, dayUsed);
         }
         
-        console.log(`    ✅ Assigned ${selectedResident.firstName} ${selectedResident.lastName} -> ${dateStr} ${shift.department.name} - ${role.roleTitle} (${currentWorkDays.size} work days)`);
+        console.log(`    ✅ ASSIGNED: ${selectedResident.firstName} ${selectedResident.lastName} -> ${dateStr} ${shift.department.name} - ${shift.name} - ${role.roleTitle} (${currentWorkDays.size} work days)`);
       } else {
         // Regular conflict
         const conflict = {
           residentId: 0,
           conflictDate: date,
           conflictType: 'no_eligible_residents',
-          description: `No eligible residents for ${shift.department.name} - ${shift.name} - ${role.roleTitle} on ${dateStr}`,
+          description: `No eligible residents for ${shift.department.name} - ${shift.name} - ${role.roleTitle} on ${dateStr}${requiredQual ? ` (requires ${requiredQual.name})` : ''}`,
           severity: 'warning'
         };
         conflicts.push(conflict);
+        console.log(`    ⚠️ WARNING: No resident available for ${dateStr} ${shift.department.name} - ${shift.name} - ${role.roleTitle}`);
       }
     }
 
-    // Log final statistics
+    // ==========================================
+    // FINAL STATISTICS AND SUMMARY
+    // ==========================================
     const managementAssignments = assignments.filter(a => {
       const matchingShift = shifts.find(s => s.id === a.shiftId);
       const matchingRole = matchingShift?.roles.find(r => r.roleTitle === a.roleTitle);
@@ -1558,7 +1584,7 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       return matchingRole && isDrivingRole(matchingRole);
     });
 
-    console.log(`\n📊 WEEK-BASED GENERATION COMPLETE:`);
+    console.log(`\n📊 ENHANCED WEEK-BASED GENERATION COMPLETE:`);
     console.log(`📊 - Total assignments: ${assignments.length}`);
     console.log(`📊 - Management assignments: ${managementAssignments.length}`);
     console.log(`📊 - Driving assignments: ${drivingAssignments.length}`);
@@ -1584,7 +1610,7 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       }
     });
 
-    // Create all assignments
+    // Create all assignments in database
     let actuallyCreated = 0;
     if (assignments.length > 0) {
       try {
@@ -1645,6 +1671,7 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       assignmentsCreated: actuallyCreated,
       managementAssignments: managementAssignments.length,
       drivingAssignments: drivingAssignments.length,
+      otherAssignments: assignments.length - managementAssignments.length - drivingAssignments.length,
       conflictsFound: conflicts.length,
       conflictsCreated: conflictsCreated,
       criticalConflicts: criticalConflicts.length,
@@ -1652,14 +1679,18 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       workDistribution: workDayStats
     };
 
+    console.log(`\n🎉 SCHEDULE GENERATION COMPLETE!`);
+    console.log(`🎉 Generated ${actuallyCreated} assignments with ${conflictsCreated} conflicts logged`);
+
     res.json({
       success: true,
       period,
-      stats: finalStats
+      stats: finalStats,
+      message: `Successfully generated ${actuallyCreated} assignments across ${dates.length} days`
     });
 
   } catch (error: any) {
-    console.error('Error generating schedule:', error);
+    console.error('🔥 Error generating schedule:', error);
     res.status(500).json({ 
       error: 'Failed to generate schedule',
       details: error.message 

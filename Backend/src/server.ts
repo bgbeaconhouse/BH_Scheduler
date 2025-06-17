@@ -969,7 +969,6 @@ app.post('/api/schedule-periods', async (req: any, res: any) => {
 });
 
 
-
 // Updated schedule generation endpoint with combined thrift manager/driver logic
 app.post('/api/generate-schedule', async (req: any, res: any) => {
   try {
@@ -1280,27 +1279,33 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
 
         const selectedComboResident = sortedComboCandidates[0];
         
-        // Assign both manager and driver roles to the same person
-        const managerAssignment = {
-          schedulePeriodId: parseInt(schedulePeriodId),
-          shiftId: shift.id,
-          residentId: selectedComboResident.id,
-          assignedDate: date,
-          roleTitle: managerRoles[0].role.roleTitle,
-          status: 'scheduled'
-        };
+        // Assign ALL manager roles to the combo person
+        managerRoles.forEach(managerRole => {
+          const managerAssignment = {
+            schedulePeriodId: parseInt(schedulePeriodId),
+            shiftId: shift.id,
+            residentId: selectedComboResident.id,
+            assignedDate: date,
+            roleTitle: managerRole.role.roleTitle,
+            status: 'scheduled'
+          };
+          assignments.push(managerAssignment);
+          console.log(`    ✅ COMBO MANAGER: ${selectedComboResident.firstName} ${selectedComboResident.lastName} -> ${dateStr} ${shift.name} - ${managerRole.role.roleTitle}`);
+        });
         
-        const driverAssignment = {
-          schedulePeriodId: parseInt(schedulePeriodId),
-          shiftId: shift.id,
-          residentId: selectedComboResident.id,
-          assignedDate: date,
-          roleTitle: driverRoles[0].role.roleTitle,
-          status: 'scheduled'
-        };
-        
-        assignments.push(managerAssignment);
-        assignments.push(driverAssignment);
+        // Assign ALL driver roles to the combo person  
+        driverRoles.forEach(driverRole => {
+          const driverAssignment = {
+            schedulePeriodId: parseInt(schedulePeriodId),
+            shiftId: shift.id,
+            residentId: selectedComboResident.id,
+            assignedDate: date,
+            roleTitle: driverRole.role.roleTitle,
+            status: 'scheduled'
+          };
+          assignments.push(driverAssignment);
+          console.log(`    ✅ COMBO DRIVER: ${selectedComboResident.firstName} ${selectedComboResident.lastName} -> ${dateStr} ${shift.name} - ${driverRole.role.roleTitle}`);
+        });
 
         // Update tracking - but only count as ONE work day since it's the same shift
         const currentWorkDays = weeklyWorkDays.get(selectedComboResident.id) || new Set();
@@ -1312,7 +1317,7 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
         dayUsed.add(selectedComboResident.id);
         dailyUsage.set(dateStr, dayUsed);
         
-        console.log(`    ✅ COMBO: ${selectedComboResident.firstName} ${selectedComboResident.lastName} -> ${dateStr} ${shift.name} (Manager + Driver)`);
+        console.log(`    ✅ COMBO TOTAL: ${selectedComboResident.firstName} ${selectedComboResident.lastName} assigned to ${managerRoles.length} manager + ${driverRoles.length} driver roles`);
         
         // Mark these specific roles as assigned by removing them from future phases
         // Remove in reverse order (highest index first) to avoid index shifting issues

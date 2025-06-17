@@ -1093,7 +1093,7 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       return role.qualificationId && drivingQualifications.includes(role.qualificationId);
     }
 
-    function isResidentEligible(resident: any, shift: any, role: any, date: Date, dayOfWeek: number, dateStr: string): { eligible: boolean, reason?: string } {
+    function isResidentEligible(resident: any, shift: any, role: any, date: Date, dayOfWeek: number, dateStr: string, currentPhase?: string): { eligible: boolean, reason?: string } {
       // Check if already used today (for non-team roles)
       const isTeamRole = (
         shift.department.name === 'shelter_runs' ||
@@ -1103,6 +1103,48 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       const dayUsed = dailyUsage.get(dateStr) || new Set();
       if (!isTeamRole && dayUsed.has(resident.id)) {
         return { eligible: false, reason: 'already_used_today' };
+      }
+
+      // CRITICAL: During priority phases, restrict qualified residents to their specialized roles
+      const residentManagementQuals = resident.qualifications
+        .filter(rq => managementQualifications.includes(rq.qualificationId))
+        .map(rq => rq.qualificationId);
+      
+      const residentDrivingQuals = resident.qualifications
+        .filter(rq => drivingQualifications.includes(rq.qualificationId))
+        .map(rq => rq.qualificationId);
+
+      // During MANAGEMENT phase: Only allow management-qualified residents for management roles
+      if (currentPhase === 'management') {
+        const isManagementRole = role.qualificationId && managementQualifications.includes(role.qualificationId);
+        const hasManagementQual = residentManagementQuals.length > 0;
+        
+        if (hasManagementQual && !isManagementRole) {
+          return { eligible: false, reason: 'reserved_for_management_phase' };
+        }
+        if (!hasManagementQual && isManagementRole) {
+          return { eligible: false, reason: 'missing_management_qualification' };
+        }
+      }
+
+      // During DRIVING phase: Only allow driving-qualified residents for driving roles (unless they're already managers)
+      if (currentPhase === 'driving') {
+        const isDrivingRole = role.qualificationId && drivingQualifications.includes(role.qualificationId);
+        const hasDrivingQual = residentDrivingQuals.length > 0;
+        const hasManagementQual = residentManagementQuals.length > 0;
+        
+        // If resident has driving qualification but NOT management, reserve them for driving roles only
+        if (hasDrivingQual && !hasManagementQual && !isDrivingRole) {
+          return { eligible: false, reason: 'reserved_for_driving_phase' };
+        }
+        if (!hasDrivingQual && isDrivingRole) {
+          return { eligible: false, reason: 'missing_driving_qualification' };
+        }
+      }
+
+      // During OTHER phase: Allow anyone not already used
+      if (currentPhase === 'other') {
+        // Don't restrict - let anyone eligible work general labor
       }
 
       // Check for Pedro-only restriction
@@ -1254,7 +1296,7 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       
       // Find eligible residents with required management qualification
       const eligibleResidents = residents.filter(resident => {
-        const eligibility = isResidentEligible(resident, shift, role, date, dayOfWeek, dateStr);
+        const eligibility = isResidentEligible(resident, shift, role, date, dayOfWeek, dateStr, 'management');
         return eligibility.eligible;
       });
 
@@ -1335,7 +1377,7 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
           const existingResident = residents.find(r => r.id === existingResidentId);
           
           if (existingResident) {
-            const eligibility = isResidentEligible(existingResident, shift, role, date, dayOfWeek, dateStr);
+            const eligibility = isResidentEligible(existingResident, shift, role, date, dayOfWeek, dateStr, 'driving');
             if (eligibility.eligible) {
               selectedResident = existingResident;
               console.log(`    🔄 Reusing shelter run team member: ${selectedResident.firstName} ${selectedResident.lastName}`);
@@ -1347,7 +1389,7 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       // If no team member, find someone new
       if (!selectedResident) {
         const eligibleResidents = residents.filter(resident => {
-          const eligibility = isResidentEligible(resident, shift, role, date, dayOfWeek, dateStr);
+          const eligibility = isResidentEligible(resident, shift, role, date, dayOfWeek, dateStr, 'driving');
           return eligibility.eligible;
         });
 
@@ -1438,7 +1480,7 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
           const existingResident = residents.find(r => r.id === existingResidentId);
           
           if (existingResident) {
-            const eligibility = isResidentEligible(existingResident, shift, role, date, dayOfWeek, dateStr);
+            const eligibility = isResidentEligible(existingResident, shift, role, date, dayOfWeek, dateStr, 'other');
             if (eligibility.eligible) {
               selectedResident = existingResident;
             }
@@ -1449,7 +1491,7 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       // If no team member, find someone new
       if (!selectedResident) {
         const eligibleResidents = residents.filter(resident => {
-          const eligibility = isResidentEligible(resident, shift, role, date, dayOfWeek, dateStr);
+          const eligibility = isResidentEligible(resident, shift, role, date, dayOfWeek, dateStr, 'other');
           return eligibility.eligible;
         });
 

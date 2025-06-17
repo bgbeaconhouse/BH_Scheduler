@@ -970,6 +970,8 @@ app.post('/api/schedule-periods', async (req: any, res: any) => {
 
 
 
+// Replace your existing /api/generate-schedule route with this fixed version
+
 app.post('/api/generate-schedule', async (req: any, res: any) => {
   try {
     const { schedulePeriodId, startDate, endDate } = req.body;
@@ -999,8 +1001,9 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
     // Get all qualifications to identify management and driving qualifications
     const qualifications = await prisma.qualification.findMany();
     
+    // FIX 1: Include thrift_manager_both in management qualifications
     const managementQualifications = qualifications.filter(q => 
-      q.name.includes('thrift_manager_')
+      q.name.includes('thrift_manager_') || q.name === 'thrift_manager_both'
     ).map(q => q.id);
     
     const drivingQualifications = qualifications.filter(q => 
@@ -1082,6 +1085,20 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       dailyUsage.set(dateStr, new Set());
     });
 
+    // FIX 2: Track shelter run drivers separately to prevent double assignment
+    const shelterRunDriverAssignments = new Map<string, Set<number>>(); // dateStr -> Set of resident IDs assigned to shelter runs
+    dates.forEach(date => {
+      const dateStr = date.toISOString().split('T')[0];
+      shelterRunDriverAssignments.set(dateStr, new Set());
+    });
+
+    // FIX 3: Track kitchen prep workers for janitor assignment
+    const kitchenPrepWorkers = new Map<string, Set<number>>(); // dateStr -> Set of resident IDs who worked kitchen prep
+    dates.forEach(date => {
+      const dateStr = date.toISOString().split('T')[0];
+      kitchenPrepWorkers.set(dateStr, new Set());
+    });
+
     console.log(`📅 Processing ${dates.length} dates with WEEK-BASED ASSIGNMENT`);
 
     // Helper functions
@@ -1094,6 +1111,14 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
     }
 
     function isResidentEligible(resident: any, shift: any, role: any, date: Date, dayOfWeek: number, dateStr: string): { eligible: boolean, reason?: string } {
+      // FIX 2: Check if already assigned to shelter runs today (for driving roles)
+      if (shift.department.name === 'shelter_runs' && isDrivingRole(role)) {
+        const shelterDriversToday = shelterRunDriverAssignments.get(dateStr) || new Set();
+        if (shelterDriversToday.has(resident.id)) {
+          return { eligible: false, reason: 'already_assigned_shelter_runs_today' };
+        }
+      }
+
       // Check if already used today (for non-team roles)
       const isTeamRole = (
         shift.department.name === 'shelter_runs' ||
@@ -1103,6 +1128,14 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       const dayUsed = dailyUsage.get(dateStr) || new Set();
       if (!isTeamRole && dayUsed.has(resident.id)) {
         return { eligible: false, reason: 'already_used_today' };
+      }
+
+      // FIX 3: For janitor roles, check if they worked kitchen prep that day
+      if (shift.department.name === 'kitchen' && role.roleTitle === 'janitor') {
+        const prepWorkersToday = kitchenPrepWorkers.get(dateStr) || new Set();
+        if (!prepWorkersToday.has(resident.id)) {
+          return { eligible: false, reason: 'must_work_kitchen_prep_first' };
+        }
       }
 
       // Check for Pedro-only restriction
@@ -1125,12 +1158,21 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
         }
       }
 
-      // Check qualification requirement
+      // FIX 1: Enhanced qualification requirement check for thrift_manager_both
       if (role.qualificationId) {
         const hasQualification = resident.qualifications.some(
           rq => rq.qualificationId === role.qualificationId
         );
-        if (!hasQualification) {
+        
+        // Special case: if looking for any thrift manager and resident has thrift_manager_both
+        if (!hasQualification && managementQualifications.includes(role.qualificationId)) {
+          const hasThriftManagerBoth = resident.qualifications.some(
+            rq => rq.qualification.name === 'thrift_manager_both'
+          );
+          if (!hasThriftManagerBoth) {
+            return { eligible: false, reason: 'missing_qualification' };
+          }
+        } else if (!hasQualification) {
           return { eligible: false, reason: 'missing_qualification' };
         }
       }
@@ -1224,16 +1266,6 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       // Find eligible residents with required management qualification
       const eligibleResidents = residents.filter(resident => {
         const eligibility = isResidentEligible(resident, shift, role, date, dayOfWeek, dateStr);
-        
-        if (eligibility.eligible && role.qualificationId) {
-          const hasRequiredQual = resident.qualifications.some(
-            rq => rq.qualificationId === role.qualificationId
-          );
-          if (!hasRequiredQual) {
-            return false;
-          }
-        }
-        
         return eligibility.eligible;
       });
 
@@ -1292,32 +1324,33 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
     }
 
     // ==========================================
-    // PHASE 2: ALL DRIVING ROLES FOR THE ENTIRE WEEK
+    // PHASE 2: ALL NON-JANITOR ROLES (INCLUDING KITCHEN PREP)
     // ==========================================
-    console.log(`\n🚗 PHASE 2: Assigning ALL DRIVING ROLES FOR THE WEEK`);
+    console.log(`\n📝 PHASE 2: Assigning ALL NON-JANITOR ROLES FOR THE WEEK`);
     
-    const weekDrivingRoles = allRoleAssignments.filter(ra => {
-      const requiresDrivingQual = isDrivingRole(ra.role);
+    const weekNonJanitorRoles = allRoleAssignments.filter(ra => {
+      const isManager = isManagementRole(ra.role);
+      const isJanitor = ra.shift.department.name === 'kitchen' && ra.role.roleTitle === 'janitor';
+      
       const alreadyAssigned = assignments.some(a => 
         a.shiftId === ra.shift.id && 
         a.roleTitle === ra.role.roleTitle && 
         a.assignedDate.toDateString() === ra.date.toDateString()
       );
-      return requiresDrivingQual && !alreadyAssigned;
+      
+      return !isManager && !isJanitor && !alreadyAssigned;
     });
 
-    console.log(`    Found ${weekDrivingRoles.length} driving positions across the week`);
+    console.log(`    Found ${weekNonJanitorRoles.length} non-janitor positions across the week`);
 
-    // Sort driving roles by date for good distribution
-    weekDrivingRoles.sort((a, b) => a.date.getTime() - b.date.getTime());
+    // Sort other roles by date for good distribution
+    weekNonJanitorRoles.sort((a, b) => a.date.getTime() - b.date.getTime());
 
     // Track teams across the week for consistency
     const weeklyTeams = new Map<string, Map<string, number>>(); // dateStr -> teamKey -> residentId
 
-    for (const roleAssignment of weekDrivingRoles) {
+    for (const roleAssignment of weekNonJanitorRoles) {
       const { shift, role, date, dayOfWeek, dateStr, slotIndex } = roleAssignment;
-      
-      console.log(`    🎯 Processing: ${dateStr} - ${shift.department.name} - ${role.roleTitle} (requires: ${role.qualification?.name})`);
       
       let selectedResident = null;
       
@@ -1335,135 +1368,6 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
             if (eligibility.eligible) {
               selectedResident = existingResident;
               console.log(`    🔄 Reusing shelter run team member: ${selectedResident.firstName} ${selectedResident.lastName}`);
-            }
-          }
-        }
-      }
-      
-      // If no team member, find someone new
-      if (!selectedResident) {
-        const eligibleResidents = residents.filter(resident => {
-          const eligibility = isResidentEligible(resident, shift, role, date, dayOfWeek, dateStr);
-          
-          if (eligibility.eligible && role.qualificationId) {
-            const hasRequiredQual = resident.qualifications.some(
-              rq => rq.qualificationId === role.qualificationId
-            );
-            if (!hasRequiredQual) {
-              return false;
-            }
-          }
-          
-          return eligibility.eligible;
-        });
-
-        if (eligibleResidents.length > 0) {
-          const sortedCandidates = eligibleResidents.sort((a, b) => {
-            const aWorkDays = (weeklyWorkDays.get(a.id) || new Set()).size;
-            const bWorkDays = (weeklyWorkDays.get(b.id) || new Set()).size;
-            
-            if (aWorkDays !== bWorkDays) {
-              return aWorkDays - bWorkDays;
-            }
-            
-            const aAssignments = assignments.filter(assign => assign.residentId === a.id).length;
-            const bAssignments = assignments.filter(assign => assign.residentId === b.id).length;
-            return aAssignments - bAssignments;
-          });
-
-          selectedResident = sortedCandidates[0];
-          
-          // Remember team member
-          if (shift.department.name === 'shelter_runs') {
-            const teamKey = `${role.roleTitle}_${slotIndex}`;
-            const dayTeams = weeklyTeams.get(dateStr) || new Map();
-            dayTeams.set(teamKey, selectedResident.id);
-            weeklyTeams.set(dateStr, dayTeams);
-          }
-        }
-      }
-      
-      if (selectedResident) {
-        // Create assignment
-        const assignment = {
-          schedulePeriodId: parseInt(schedulePeriodId),
-          shiftId: shift.id,
-          residentId: selectedResident.id,
-          assignedDate: date,
-          roleTitle: role.roleTitle,
-          status: 'scheduled'
-        };
-        
-        assignments.push(assignment);
-
-        // Update tracking
-        const currentWorkDays = weeklyWorkDays.get(selectedResident.id) || new Set();
-        currentWorkDays.add(dateStr);
-        weeklyWorkDays.set(selectedResident.id, currentWorkDays);
-        
-        const isTeamRole = shift.department.name === 'shelter_runs';
-        if (!isTeamRole) {
-          const dayUsed = dailyUsage.get(dateStr) || new Set();
-          dayUsed.add(selectedResident.id);
-          dailyUsage.set(dateStr, dayUsed);
-        }
-        
-        console.log(`    ✅ DRIVER: ${selectedResident.firstName} ${selectedResident.lastName} -> ${dateStr} ${shift.department.name} (${currentWorkDays.size} work days)`);
-      } else {
-        // High priority conflict
-        const conflict = {
-          residentId: 0,
-          conflictDate: date,
-          conflictType: 'high_priority_driver_unfilled',
-          description: `HIGH PRIORITY: No eligible residents for DRIVING role ${shift.department.name} - ${shift.name} - ${role.roleTitle} on ${dateStr} (requires ${role.qualification?.name})`,
-          severity: 'error'
-        };
-        conflicts.push(conflict);
-        console.log(`    ❌ HIGH PRIORITY: No driver for ${dateStr} ${shift.department.name} - ${role.roleTitle}`);
-      }
-    }
-
-    // ==========================================
-    // PHASE 3: ALL OTHER ROLES FOR THE ENTIRE WEEK
-    // ==========================================
-    console.log(`\n📝 PHASE 3: Assigning ALL REMAINING ROLES FOR THE WEEK`);
-    
-    const weekOtherRoles = allRoleAssignments.filter(ra => {
-      const isManager = isManagementRole(ra.role);
-      const isDriver = isDrivingRole(ra.role);
-      
-      const alreadyAssigned = assignments.some(a => 
-        a.shiftId === ra.shift.id && 
-        a.roleTitle === ra.role.roleTitle && 
-        a.assignedDate.toDateString() === ra.date.toDateString()
-      );
-      
-      return !isManager && !isDriver && !alreadyAssigned;
-    });
-
-    console.log(`    Found ${weekOtherRoles.length} remaining positions across the week`);
-
-    // Sort other roles by date for good distribution
-    weekOtherRoles.sort((a, b) => a.date.getTime() - b.date.getTime());
-
-    for (const roleAssignment of weekOtherRoles) {
-      const { shift, role, date, dayOfWeek, dateStr, slotIndex } = roleAssignment;
-      
-      let selectedResident = null;
-      
-      // Check for existing team assignments from previous phases
-      if (shift.department.name === 'shelter_runs') {
-        const teamKey = `${role.roleTitle}_${slotIndex}`;
-        const dayTeams = weeklyTeams.get(dateStr) || new Map();
-        
-        if (dayTeams.has(teamKey)) {
-          const existingResidentId = dayTeams.get(teamKey)!;
-          const existingResident = residents.find(r => r.id === existingResidentId);
-          
-          if (existingResident) {
-            const eligibility = isResidentEligible(existingResident, shift, role, date, dayOfWeek, dateStr);
-            if (eligibility.eligible) {
-              selectedResident = existingResident;
             }
           }
         }
@@ -1520,15 +1424,26 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
         currentWorkDays.add(dateStr);
         weeklyWorkDays.set(selectedResident.id, currentWorkDays);
         
-        const isTeamRole = (
-          shift.department.name === 'shelter_runs' ||
-          (shift.department.name === 'kitchen' && role.roleTitle === 'janitor')
-        );
+        const isTeamRole = shift.department.name === 'shelter_runs';
         
         if (!isTeamRole) {
           const dayUsed = dailyUsage.get(dateStr) || new Set();
           dayUsed.add(selectedResident.id);
           dailyUsage.set(dateStr, dayUsed);
+        }
+
+        // FIX 2: Track shelter run driver assignments
+        if (shift.department.name === 'shelter_runs' && isDrivingRole(role)) {
+          const shelterDriversToday = shelterRunDriverAssignments.get(dateStr) || new Set();
+          shelterDriversToday.add(selectedResident.id);
+          shelterRunDriverAssignments.set(dateStr, shelterDriversToday);
+        }
+
+        // FIX 3: Track kitchen prep workers for janitor assignment
+        if (shift.department.name === 'kitchen' && role.roleTitle !== 'janitor') {
+          const prepWorkersToday = kitchenPrepWorkers.get(dateStr) || new Set();
+          prepWorkersToday.add(selectedResident.id);
+          kitchenPrepWorkers.set(dateStr, prepWorkersToday);
         }
         
         console.log(`    ✅ Assigned ${selectedResident.firstName} ${selectedResident.lastName} -> ${dateStr} ${shift.department.name} - ${role.roleTitle} (${currentWorkDays.size} work days)`);
@@ -1545,6 +1460,91 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       }
     }
 
+    // ==========================================
+    // PHASE 3: JANITOR ROLES (MUST BE FROM KITCHEN PREP WORKERS)
+    // ==========================================
+    console.log(`\n🧹 PHASE 3: Assigning JANITOR ROLES FROM KITCHEN PREP WORKERS`);
+    
+    const weekJanitorRoles = allRoleAssignments.filter(ra => {
+      const isJanitor = ra.shift.department.name === 'kitchen' && ra.role.roleTitle === 'janitor';
+      
+      const alreadyAssigned = assignments.some(a => 
+        a.shiftId === ra.shift.id && 
+        a.roleTitle === ra.role.roleTitle && 
+        a.assignedDate.toDateString() === ra.date.toDateString()
+      );
+      
+      return isJanitor && !alreadyAssigned;
+    });
+
+    console.log(`    Found ${weekJanitorRoles.length} janitor positions across the week`);
+
+    for (const roleAssignment of weekJanitorRoles) {
+      const { shift, role, date, dayOfWeek, dateStr, slotIndex } = roleAssignment;
+      
+      console.log(`    🎯 Processing janitor role: ${dateStr} - ${shift.department.name} - ${role.roleTitle}`);
+      
+      // Only consider residents who worked kitchen prep that day
+      const prepWorkersToday = kitchenPrepWorkers.get(dateStr) || new Set();
+      console.log(`    Available kitchen prep workers today: ${prepWorkersToday.size}`);
+      
+      const eligibleJanitors = residents.filter(resident => {
+        // Must have worked kitchen prep today
+        if (!prepWorkersToday.has(resident.id)) {
+          return false;
+        }
+        
+        const eligibility = isResidentEligible(resident, shift, role, date, dayOfWeek, dateStr);
+        return eligibility.eligible;
+      });
+
+      if (eligibleJanitors.length > 0) {
+        // Sort by work balance
+        const sortedCandidates = eligibleJanitors.sort((a, b) => {
+          const aWorkDays = (weeklyWorkDays.get(a.id) || new Set()).size;
+          const bWorkDays = (weeklyWorkDays.get(b.id) || new Set()).size;
+          
+          if (aWorkDays !== bWorkDays) {
+            return aWorkDays - bWorkDays;
+          }
+          
+          const aAssignments = assignments.filter(assign => assign.residentId === a.id).length;
+          const bAssignments = assignments.filter(assign => assign.residentId === b.id).length;
+          return aAssignments - bAssignments;
+        });
+
+        const selectedResident = sortedCandidates[0];
+        
+        // Create assignment
+        const assignment = {
+          schedulePeriodId: parseInt(schedulePeriodId),
+          shiftId: shift.id,
+          residentId: selectedResident.id,
+          assignedDate: date,
+          roleTitle: role.roleTitle,
+          status: 'scheduled'
+        };
+        
+        assignments.push(assignment);
+
+        // Note: Don't update weeklyWorkDays or dailyUsage since janitor is a team role
+        // with kitchen prep workers who already worked that day
+        
+        console.log(`    ✅ JANITOR: ${selectedResident.firstName} ${selectedResident.lastName} -> ${dateStr} (from kitchen prep team)`);
+      } else {
+        // Janitor conflict
+        const conflict = {
+          residentId: 0,
+          conflictDate: date,
+          conflictType: 'janitor_no_kitchen_prep',
+          description: `No eligible janitors from kitchen prep workers for ${dateStr}. Available prep workers: ${prepWorkersToday.size}`,
+          severity: 'warning'
+        };
+        conflicts.push(conflict);
+        console.log(`    ❌ No eligible janitors from kitchen prep workers for ${dateStr}`);
+      }
+    }
+
     // Log final statistics
     const managementAssignments = assignments.filter(a => {
       const matchingShift = shifts.find(s => s.id === a.shiftId);
@@ -1558,11 +1558,17 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       return matchingRole && isDrivingRole(matchingRole);
     });
 
+    const janitorAssignments = assignments.filter(a => {
+      const matchingShift = shifts.find(s => s.id === a.shiftId);
+      return matchingShift?.department.name === 'kitchen' && a.roleTitle === 'janitor';
+    });
+
     console.log(`\n📊 WEEK-BASED GENERATION COMPLETE:`);
     console.log(`📊 - Total assignments: ${assignments.length}`);
     console.log(`📊 - Management assignments: ${managementAssignments.length}`);
     console.log(`📊 - Driving assignments: ${drivingAssignments.length}`);
-    console.log(`📊 - Other assignments: ${assignments.length - managementAssignments.length - drivingAssignments.length}`);
+    console.log(`📊 - Janitor assignments: ${janitorAssignments.length}`);
+    console.log(`📊 - Other assignments: ${assignments.length - managementAssignments.length - drivingAssignments.length - janitorAssignments.length}`);
     console.log(`📊 - Total conflicts: ${conflicts.length}`);
 
     const criticalConflicts = conflicts.filter(c => c.severity === 'error');
@@ -1570,19 +1576,6 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
     
     console.log(`📊 - Critical conflicts: ${criticalConflicts.length}`);
     console.log(`📊 - Warning conflicts: ${warningConflicts.length}`);
-
-    // Log work distribution
-    let workDayStats = { 3: 0, 2: 0, 1: 0, 0: 0 };
-    weeklyWorkDays.forEach((workDaySet, residentId) => {
-      const workDayCount = workDaySet.size;
-      if (workDayCount > 0) {
-        const resident = residents.find(r => r.id === residentId);
-        console.log(`📊 - ${resident?.firstName} ${resident?.lastName}: ${workDayCount} work days`);
-        workDayStats[workDayCount as keyof typeof workDayStats] = (workDayStats[workDayCount as keyof typeof workDayStats] || 0) + 1;
-      } else {
-        workDayStats[0]++;
-      }
-    });
 
     // Create all assignments
     let actuallyCreated = 0;
@@ -1645,11 +1638,11 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
       assignmentsCreated: actuallyCreated,
       managementAssignments: managementAssignments.length,
       drivingAssignments: drivingAssignments.length,
+      janitorAssignments: janitorAssignments.length,
       conflictsFound: conflicts.length,
       conflictsCreated: conflictsCreated,
       criticalConflicts: criticalConflicts.length,
-      warningConflicts: warningConflicts.length,
-      workDistribution: workDayStats
+      warningConflicts: warningConflicts.length
     };
 
     res.json({

@@ -1117,16 +1117,20 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
 
     // ENHANCED: Improved resident eligibility check with "both" qualification support
     function isResidentEligible(resident: any, shift: any, role: any, date: Date, dayOfWeek: number, dateStr: string): { eligible: boolean, reason?: string } {
-      // Check if already used today (for non-team roles)
-      const isTeamRole = (
-        shift.department.name === 'shelter_runs' ||
-        (shift.department.name === 'kitchen' && role.roleTitle === 'janitor')
-      );
-      
-      const dayUsed = dailyUsage.get(dateStr) || new Set();
-      if (!isTeamRole && dayUsed.has(resident.id)) {
-        return { eligible: false, reason: 'already_used_today' };
-      }
+  // Check if already used today (for non-team roles OR already assigned to a driver role today)
+// Check if already used today (for non-team roles OR already assigned to a driver role today)
+const isTeamRole = (
+  shift.department.name === 'shelter_runs' ||
+  (shift.department.name === 'kitchen' && role.roleTitle === 'janitor')
+);
+
+const dayUsed = dailyUsage.get(dateStr) || new Set();
+const isDrivingRole = role.qualificationId && drivingQualifications.includes(role.qualificationId);
+
+// Prevent double-booking for non-team roles OR for driving roles (even in team contexts)
+if ((!isTeamRole || isDrivingRole) && dayUsed.has(resident.id)) {
+  return { eligible: false, reason: 'already_used_today' };
+}
 
       // Check for Pedro-only restriction
       const hasPedroOnlyQualification = resident.qualifications.some(
@@ -1437,12 +1441,15 @@ if (resident.qualifications.some(rq => rq.qualification.name === 'thrift_manager
         currentWorkDays.add(dateStr);
         weeklyWorkDays.set(selectedResident.id, currentWorkDays);
         
-        const isTeamRole = shift.department.name === 'shelter_runs';
-        if (!isTeamRole) {
-          const dayUsed = dailyUsage.get(dateStr) || new Set();
-          dayUsed.add(selectedResident.id);
-          dailyUsage.set(dateStr, dayUsed);
-        }
+    const isTeamRole = shift.department.name === 'shelter_runs';
+const isDrivingRole = role.qualificationId && drivingQualifications.includes(role.qualificationId);
+
+// Track usage for non-team roles OR for driving roles (even in team contexts)
+if (!isTeamRole || isDrivingRole) {
+  const dayUsed = dailyUsage.get(dateStr) || new Set();
+  dayUsed.add(selectedResident.id);
+  dailyUsage.set(dateStr, dayUsed);
+}
         
         console.log(`    ✅ DRIVER ASSIGNED: ${selectedResident.firstName} ${selectedResident.lastName} -> ${dateStr} ${shift.department.name} - ${shift.name} (${currentWorkDays.size} work days)`);
       } else {
@@ -1558,16 +1565,19 @@ if (resident.qualifications.some(rq => rq.qualification.name === 'thrift_manager
         currentWorkDays.add(dateStr);
         weeklyWorkDays.set(selectedResident.id, currentWorkDays);
         
-        const isTeamRole = (
-          shift.department.name === 'shelter_runs' ||
-          (shift.department.name === 'kitchen' && role.roleTitle === 'janitor')
-        );
-        
-        if (!isTeamRole) {
-          const dayUsed = dailyUsage.get(dateStr) || new Set();
-          dayUsed.add(selectedResident.id);
-          dailyUsage.set(dateStr, dayUsed);
-        }
+     const isTeamRole = (
+  shift.department.name === 'shelter_runs' ||
+  (shift.department.name === 'kitchen' && role.roleTitle === 'janitor')
+);
+
+const isDrivingRole = role.qualificationId && drivingQualifications.includes(role.qualificationId);
+
+// Track usage for non-team roles OR for driving roles (even in team contexts)
+if (!isTeamRole || isDrivingRole) {
+  const dayUsed = dailyUsage.get(dateStr) || new Set();
+  dayUsed.add(selectedResident.id);
+  dailyUsage.set(dateStr, dayUsed);
+}
         
         console.log(`    ✅ ASSIGNED: ${selectedResident.firstName} ${selectedResident.lastName} -> ${dateStr} ${shift.department.name} - ${shift.name} - ${role.roleTitle} (${currentWorkDays.size} work days)`);
       } else {

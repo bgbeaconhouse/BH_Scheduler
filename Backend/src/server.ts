@@ -1130,10 +1130,28 @@ async function generateAssignments(shifts, residents, dates, schedulePeriodId) {
     
     // Process each shift for this day
     for (const shift of dayShifts) {
-      console.log(`  🔧 Processing shift: ${shift.name}`);
+      console.log(`  🔧 Processing shift: ${shift.name} (${shift.department.name})`);
       
-      // Process each role in this shift
-      for (const role of shift.roles) {
+      // DEBUG: Show all roles for this shift
+      console.log(`    Roles in this shift:`);
+      shift.roles.forEach((role, index) => {
+        console.log(`      ${index + 1}. ${role.roleTitle} (requires: ${role.qualification?.name || 'none'}) - count: ${role.requiredCount}`);
+      });
+      
+      // Process roles in priority order: management first, then others
+      const managementRoles = shift.roles.filter(role => 
+        role.qualification?.name?.includes('manager') || 
+        role.roleTitle.toLowerCase().includes('manager')
+      );
+      const otherRoles = shift.roles.filter(role => 
+        !role.qualification?.name?.includes('manager') && 
+        !role.roleTitle.toLowerCase().includes('manager')
+      );
+      
+      const sortedRoles = [...managementRoles, ...otherRoles];
+      
+      // Process each role in priority order
+      for (const role of sortedRoles) {
         // Create multiple assignments if requiredCount > 1
         for (let i = 0; i < role.requiredCount; i++) {
           const assignment = await assignResident(
@@ -1177,9 +1195,24 @@ function getShiftsForDay(shifts, dayOfWeek) {
 // Helper function: Assign a resident to a specific role
 async function assignResident(shift, role, date, dayOfWeek, dateStr, residents, residentWorkDays, dailyUsage, schedulePeriodId, slotIndex) {
   
+  console.log(`    🎯 Trying to assign: ${role.roleTitle} (requires: ${role.qualification?.name || 'none'})`);
+  
   // Find eligible residents for this role
   const eligibleResidents = residents.filter(resident => {
-    return isResidentEligible(resident, shift, role, date, dayOfWeek, dateStr, residentWorkDays, dailyUsage);
+    const eligible = isResidentEligible(resident, shift, role, date, dayOfWeek, dateStr, residentWorkDays, dailyUsage);
+    if (!eligible) {
+      // DEBUG: Show why they're not eligible
+      const reasons = getIneligibilityReasons(resident, shift, role, date, dayOfWeek, dateStr, residentWorkDays, dailyUsage);
+      console.log(`      ❌ ${resident.firstName} ${resident.lastName}: ${reasons.join(', ')}`);
+    }
+    return eligible;
+  });
+
+  console.log(`    📋 Found ${eligibleResidents.length} eligible residents:`);
+  eligibleResidents.forEach(resident => {
+    const workDays = residentWorkDays.get(resident.id).size;
+    const qualifications = resident.qualifications.map(q => q.qualification.name).join(', ');
+    console.log(`      ✅ ${resident.firstName} ${resident.lastName} (${workDays} work days, quals: ${qualifications || 'none'})`);
   });
 
   if (eligibleResidents.length === 0) {
@@ -1223,12 +1256,77 @@ async function assignResident(shift, role, date, dayOfWeek, dateStr, residents, 
   };
 }
 
+// Helper function: Get reasons why a resident is not eligible (for debugging)
+function getIneligibilityReasons(resident, shift, role, date, dayOfWeek, dateStr, residentWorkDays, dailyUsage) {
+  const reasons = [];
+  
+  // Check if already worked today
+  const dayUsed = dailyUsage.get(dateStr);
+  if (dayUsed.has(resident.id)) {
+    reasons.push('already worked today');
+  }
+
+  // Check work limit
+  const currentWorkDays = residentWorkDays.get(resident.id);
+  if (currentWorkDays.size >= 3) {
+    reasons.push(`work limit (${currentWorkDays.size}/3 days)`);
+  }
+
+  // Check qualification requirement
+  if (role.qualificationId) {
+    const hasQualification = resident.qualifications.some(
+      rq => rq.qualificationId === role.qualificationId
+    );
+    if (!hasQualification) {
+      const residentQuals = resident.qualifications.map(q => q.qualification.name).join(', ');
+      reasons.push(`missing qualification (has: ${residentQuals || 'none'}, needs: ${role.qualification?.name})`);
+    }
+  }
+
+  // Check tenure requirement
+  if (shift.minTenureMonths > 0) {
+    const admissionDate = new Date(resident.admissionDate);
+    const monthsDiff = (date.getTime() - admissionDate.getTime()) / (1000 * 60 * 60 * 24 * 30.44);
+    if (monthsDiff < shift.minTenureMonths) {
+      reasons.push(`insufficient tenure (${monthsDiff.toFixed(1)} < ${shift.minTenureMonths} months)`);
+    }
+  }
+
+  // Check availability
+  const dayAvailability = resident.availability.find(a => a.dayOfWeek === dayOfWeek);
+  if (dayAvailability) {
+    const shiftStart = new Date(`2000-01-01T${shift.startTime}:00`);
+    const shiftEnd = new Date(`2000-01-01T${shift.endTime}:00`);
+    const availStart = new Date(`2000-01-01T${dayAvailability.startTime}:00`);
+    const availEnd = new Date(`2000-01-01T${dayAvailability.endTime}:00`);
+
+    if (shiftStart < availStart || shiftEnd > availEnd) {
+      reasons.push(`availability conflict (shift: ${shift.startTime}-${shift.endTime}, available: ${dayAvailability.startTime}-${dayAvailability.endTime})`);
+    }
+  }
+
+  // Check appointment conflicts
+  const hasAppointmentConflict = resident.appointments.some(apt => {
+    const aptDateStr = new Date(apt.startDateTime).toLocaleDateString('en-CA');
+    const currentDateStr = date.toLocaleDateString('en-CA');
+    return aptDateStr === currentDateStr;
+  });
+
+  if (hasAppointmentConflict) {
+    reasons.push('appointment conflict');
+  }
+
+  return reasons;
+}
+
 // Helper function: Check if resident is eligible for a role
 function isResidentEligible(resident, shift, role, date, dayOfWeek, dateStr, residentWorkDays, dailyUsage) {
   
   // Check if already worked today (basic rule)
+  // EXCEPTION: Allow thrift store workers to take multiple roles at same location
+  const isThriftStore = shift.department.name === 'thrift_stores';
   const dayUsed = dailyUsage.get(dateStr);
-  if (dayUsed.has(resident.id)) {
+  if (!isThriftStore && dayUsed.has(resident.id)) {
     return false;
   }
 

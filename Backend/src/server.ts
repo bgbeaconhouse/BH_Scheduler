@@ -1000,7 +1000,7 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
     const qualifications = await prisma.qualification.findMany();
     
     const managementQualifications = qualifications.filter(q => 
-      q.name.includes('thrift_manager_')
+      q.name.startsWith('thrift_manager_')
     ).map(q => q.id);
     
     const drivingQualifications = qualifications.filter(q => 

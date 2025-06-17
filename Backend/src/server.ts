@@ -1315,27 +1315,26 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
         console.log(`    ✅ COMBO: ${selectedComboResident.firstName} ${selectedComboResident.lastName} -> ${dateStr} ${shift.name} (Manager + Driver)`);
         
         // Mark these specific roles as assigned by removing them from future phases
-        const assignedManagerIndex = allRoleAssignments.findIndex(ra => 
-          ra.shift.id === shift.id && 
-          ra.dateStr === dateStr && 
-          isManagementRole(ra.role)
-        );
-        const assignedDriverIndex = allRoleAssignments.findIndex(ra => 
-          ra.shift.id === shift.id && 
-          ra.dateStr === dateStr && 
-          isDrivingRole(ra.role)
-        );
+        // Remove in reverse order (highest index first) to avoid index shifting issues
+        const rolesToRemove = [];
         
-        if (assignedManagerIndex !== -1) allRoleAssignments.splice(assignedManagerIndex, 1);
-        if (assignedDriverIndex !== -1) {
-          // Need to find the index again after the first splice
-          const newDriverIndex = allRoleAssignments.findIndex(ra => 
-            ra.shift.id === shift.id && 
-            ra.dateStr === dateStr && 
-            isDrivingRole(ra.role)
-          );
-          if (newDriverIndex !== -1) allRoleAssignments.splice(newDriverIndex, 1);
-        }
+        // Find all matching roles for this shift and date
+        allRoleAssignments.forEach((ra, index) => {
+          if (ra.shift.id === shift.id && 
+              ra.dateStr === dateStr && 
+              (isManagementRole(ra.role) || isDrivingRole(ra.role))) {
+            rolesToRemove.push(index);
+          }
+        });
+        
+        // Remove from highest index to lowest to avoid index shifting
+        rolesToRemove.sort((a, b) => b - a).forEach(index => {
+          const removedRole = allRoleAssignments[index];
+          console.log(`    🗑️ Removing assigned role: ${removedRole.role.roleTitle} from future phases`);
+          allRoleAssignments.splice(index, 1);
+        });
+        
+        console.log(`    📝 Removed ${rolesToRemove.length} roles from future processing`);
         
       } else {
         console.log(`    ❌ No combo-eligible residents for ${dateStr} ${shift.name}`);

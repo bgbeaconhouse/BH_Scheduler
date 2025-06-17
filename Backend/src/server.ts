@@ -999,9 +999,9 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
     // Get all qualifications to identify management and driving qualifications
     const qualifications = await prisma.qualification.findMany();
     
-    const managementQualifications = qualifications.filter(q => 
-      q.name.startsWith('thrift_manager_')
-    ).map(q => q.id);
+   const managementQualifications = qualifications.filter(q => 
+  q.name.includes('thrift_manager_') || q.name === 'thrift_manager_both'
+).map(q => q.id);
     
     const drivingQualifications = qualifications.filter(q => 
       q.name.startsWith('driver_')

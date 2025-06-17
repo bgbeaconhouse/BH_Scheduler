@@ -1490,24 +1490,77 @@ if (shift.department.name === 'shelter_runs' ||
       
       let selectedResident = null;
       
-      // Check for existing team assignments from // Check for existing team assignments from previous phases
-if (shift.department.name === 'shelter_runs' || 
-    (shift.department.name === 'kitchen' && role.roleTitle === 'janitor')) {
-  const teamKey = `${shift.department.name}_${role.roleTitle}_${slotIndex}`;
+// Check for existing team assignments from previous phases
+if (shift.department.name === 'shelter_runs') {
+  const teamKey = `${role.roleTitle}_${slotIndex}`;
   const dayTeams = weeklyTeams.get(dateStr) || new Map();
-        
-        if (dayTeams.has(teamKey)) {
-          const existingResidentId = dayTeams.get(teamKey)!;
-          const existingResident = residents.find(r => r.id === existingResidentId);
-          
-          if (existingResident) {
-            const eligibility = isResidentEligible(existingResident, shift, role, date, dayOfWeek, dateStr);
-            if (eligibility.eligible) {
-              selectedResident = existingResident;
-            }
-          }
-        }
+  
+  if (dayTeams.has(teamKey)) {
+    const existingResidentId = dayTeams.get(teamKey)!;
+    const existingResident = residents.find(r => r.id === existingResidentId);
+    
+    if (existingResident) {
+      const eligibility = isResidentEligible(existingResident, shift, role, date, dayOfWeek, dateStr);
+      if (eligibility.eligible) {
+        selectedResident = existingResident;
       }
+    }
+  }
+}
+
+// SPECIAL CASE: Kitchen janitors should be selected from kitchen prep workers on the same day
+if (shift.department.name === 'kitchen' && role.roleTitle === 'janitor') {
+  console.log(`    🧹 JANITOR SELECTION: Looking for kitchen prep workers on ${dateStr}`);
+  
+  // Find all kitchen prep assignments for this date
+  const kitchenPrepAssignments = assignments.filter(a => {
+    const assignmentShift = shifts.find(s => s.id === a.shiftId);
+    const assignmentDate = new Date(a.assignedDate).toLocaleDateString('en-CA');
+    
+    return assignmentShift?.department.name === 'kitchen' && 
+           assignmentDate === dateStr &&
+           a.roleTitle !== 'janitor'; // Don't include other janitors
+  });
+  
+  console.log(`    🧹 Found ${kitchenPrepAssignments.length} kitchen prep workers for ${dateStr}`);
+  
+  if (kitchenPrepAssignments.length > 0) {
+    // Get the residents who are already doing kitchen prep
+    const kitchenPrepResidents = kitchenPrepAssignments.map(a => {
+      return residents.find(r => r.id === a.residentId);
+    }).filter(Boolean);
+    
+    console.log(`    🧹 Kitchen prep residents:`, kitchenPrepResidents.map(r => `${r?.firstName} ${r?.lastName}`));
+    
+    // Find eligible residents from the kitchen prep workers
+    const eligibleKitchenWorkers = kitchenPrepResidents.filter(resident => {
+      if (!resident) return false;
+      const eligibility = isResidentEligible(resident, shift, role, date, dayOfWeek, dateStr);
+      console.log(`    🧹 Checking ${resident.firstName} ${resident.lastName}: eligible=${eligibility.eligible}, reason=${eligibility.reason || 'none'}`);
+      return eligibility.eligible;
+    });
+    
+    if (eligibleKitchenWorkers.length > 0) {
+      // Sort by least janitor assignments so far
+      const sortedKitchenWorkers = eligibleKitchenWorkers.sort((a, b) => {
+        const aJanitorCount = assignments.filter(assign => 
+          assign.residentId === a!.id && assign.roleTitle === 'janitor'
+        ).length;
+        const bJanitorCount = assignments.filter(assign => 
+          assign.residentId === b!.id && assign.roleTitle === 'janitor'
+        ).length;
+        return aJanitorCount - bJanitorCount;
+      });
+      
+      selectedResident = sortedKitchenWorkers[0];
+      console.log(`    🧹 SELECTED KITCHEN WORKER AS JANITOR: ${selectedResident!.firstName} ${selectedResident!.lastName}`);
+    } else {
+      console.log(`    🧹 No eligible kitchen workers found for janitor role`);
+    }
+  } else {
+    console.log(`    🧹 No kitchen prep workers found for ${dateStr} - will use regular assignment logic`);
+  }
+}
       
       // If no team member, find someone new
       if (!selectedResident) {

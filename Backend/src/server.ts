@@ -1148,29 +1148,31 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
         }
       }
 
-      // ENHANCED: Improved qualification requirement check
-      if (role.qualificationId) {
-        const requiredQual = qualifications.find(q => q.id === role.qualificationId);
-        const hasDirectQualification = resident.qualifications.some(
-          rq => rq.qualificationId === role.qualificationId
-        );
-        
-        if (hasDirectQualification) {
-          // Resident has the exact required qualification
-        } else {
-          // Check for "both" qualification for store-specific manager roles
-          if (requiredQual && (requiredQual.name === 'thrift_manager_san_pedro' || requiredQual.name === 'thrift_manager_long_beach')) {
-            const bothQual = qualifications.find(q => q.name === 'thrift_manager_both');
-            const hasBothQualification = bothQual && resident.qualifications.some(rq => rq.qualificationId === bothQual.id);
-            
-            if (!hasBothQualification) {
-              return { eligible: false, reason: 'missing_qualification' };
-            }
-          } else {
-            return { eligible: false, reason: 'missing_qualification' };
-          }
-        }
-      }
+    if (role.qualificationId) {
+  const requiredQual = qualifications.find(q => q.id === role.qualificationId);
+  const hasDirectQualification = resident.qualifications.some(
+    rq => rq.qualificationId === role.qualificationId
+  );
+  
+  if (hasDirectQualification) {
+    // Resident has the exact required qualification - good to go
+    console.log(`    ✅ ${resident.firstName} has required qualification: ${requiredQual?.name}`);
+  } else {
+    // Check if they have thrift_manager_both and this is a thrift manager role
+    const hasBothQual = resident.qualifications.some(
+      rq => rq.qualification.name === 'thrift_manager_both'
+    );
+    
+    const isThriftManagerRole = requiredQual?.name?.startsWith('thrift_manager') || false;
+    
+    if (hasBothQual && isThriftManagerRole) {
+      console.log(`    ✅ ${resident.firstName} has thrift_manager_both for ${requiredQual?.name} role`);
+    } else {
+      console.log(`    ❌ ${resident.firstName} missing qualification. Required: ${requiredQual?.name}, Has both: ${hasBothQual}, Is thrift role: ${isThriftManagerRole}`);
+      return { eligible: false, reason: 'missing_qualification' };
+    }
+  }
+}
 
       // Check availability
       const dayAvailability = resident.availability.find(a => a.dayOfWeek === dayOfWeek);

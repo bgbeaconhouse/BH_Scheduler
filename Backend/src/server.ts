@@ -1000,7 +1000,9 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
     const qualifications = await prisma.qualification.findMany();
     
     const managementQualifications = qualifications.filter(q => 
-      q.name.includes('thrift_manager_')
+      q.name.includes('thrift_manager') || 
+      q.name.includes('manager') ||
+      q.name === 'thrift_manager_both'
     ).map(q => q.id);
     
     const drivingQualifications = qualifications.filter(q => 
@@ -1008,8 +1010,11 @@ app.post('/api/generate-schedule', async (req: any, res: any) => {
     ).map(q => q.id);
 
     console.log('🎯 DETECTED QUALIFICATIONS:');
+    console.log(`   All qualifications:`, qualifications.map(q => `${q.id}: ${q.name}`));
     console.log(`   Management qualification IDs: ${managementQualifications}`);
+    console.log(`   Management qualification names:`, qualifications.filter(q => managementQualifications.includes(q.id)).map(q => q.name));
     console.log(`   Driving qualification IDs: ${drivingQualifications}`);
+    console.log(`   Driving qualification names:`, qualifications.filter(q => drivingQualifications.includes(q.id)).map(q => q.name));
 
     // Get all active shifts with their requirements
     const shifts = await prisma.shift.findMany({

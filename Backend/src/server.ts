@@ -945,8 +945,6 @@ app.get('/api/schedule-periods', async (req: any, res: any) => {
   }
 });
 
-// Replace your existing schedule period creation route with this fixed version:
-
 app.post('/api/schedule-periods', async (req: any, res: any) => {
   try {
     const { name, startDate, endDate } = req.body;
@@ -955,43 +953,11 @@ app.post('/api/schedule-periods', async (req: any, res: any) => {
       return res.status(400).json({ error: 'Name, start date, and end date are required' });
     }
 
-    // Function to treat input as Pacific Time and store it properly
-    function parsePacificDate(dateString: string): Date {
-      // Add time component to make it noon Pacific time to avoid timezone issues
-      const dateWithTime = `${dateString}T12:00:00`;
-      const cleanString = dateWithTime.replace('Z', '');
-      const date = new Date(cleanString);
-      
-      // California is UTC-8 (PST) or UTC-7 (PDT)
-      // For simplicity, let's use UTC-7 (PDT) since it's summer
-      const pacificOffset = 7 * 60; // 7 hours in minutes
-      
-      // Add the offset to store the "local" time as if it were UTC
-      const adjustedDate = new Date(date.getTime() + (pacificOffset * 60 * 1000));
-      
-      return adjustedDate;
-    }
-
-    console.log('=== SCHEDULE PERIOD DATE FIX ===');
-    console.log('Received startDate:', startDate);
-    console.log('Received endDate:', endDate);
-    console.log('Original start Date object:', new Date(startDate).toString());
-    console.log('Original end Date object:', new Date(endDate).toString());
-    
-    const adjustedStartDate = parsePacificDate(startDate);
-    const adjustedEndDate = parsePacificDate(endDate);
-    
-    console.log('Adjusted start for Pacific Time:', adjustedStartDate.toString());
-    console.log('Adjusted end for Pacific Time:', adjustedEndDate.toString());
-    console.log('Storing start as UTC:', adjustedStartDate.toISOString());
-    console.log('Storing end as UTC:', adjustedEndDate.toISOString());
-    console.log('===============================');
-
     const period = await prisma.schedulePeriod.create({
       data: {
         name: name.trim(),
-        startDate: adjustedStartDate,
-        endDate: adjustedEndDate
+        startDate: new Date(startDate),
+        endDate: new Date(endDate)
       }
     });
     
@@ -1206,142 +1172,20 @@ async function generateAssignments(shifts, residents, dates, schedulePeriodId) {
   return { assignments, conflicts };
 }
 
-// MODIFIED Helper function: Get shifts that run on a specific day (with Friday shelter run logic)
+// Helper function: Get shifts that run on a specific day
 function getShiftsForDay(shifts, dayOfWeek) {
   const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
   const dayField = days[dayOfWeek];
   
-  const dayShifts = shifts.filter(shift => shift[dayField] === true);
-  
-  // Special handling for Friday shelter runs
-  if (dayOfWeek === 5) { // Friday
-    console.log(`🚐 FRIDAY: Processing shelter runs with special logic`);
-    
-    // For Friday, ensure we process shelter runs in the right order:
-    // 1. Morning (breakfast team)
-    // 2. Midday (lunch team) 
-    // 3. Evening (reuse lunch team)
-    const shelterShifts = dayShifts.filter(shift => shift.department.name === 'shelter_runs');
-    const otherShifts = dayShifts.filter(shift => shift.department.name !== 'shelter_runs');
-    
-    // Sort shelter shifts by time to ensure proper order
-    shelterShifts.sort((a, b) => a.startTime.localeCompare(b.startTime));
-    
-    // Return shelter shifts first (in time order), then other shifts
-    return [...shelterShifts, ...otherShifts];
-  }
-  
-  // For non-Friday, ensure shelter runs are processed in order too
-  const shelterShifts = dayShifts.filter(shift => shift.department.name === 'shelter_runs');
-  const otherShifts = dayShifts.filter(shift => shift.department.name !== 'shelter_runs');
-  
-  // Sort shelter shifts by time
-  shelterShifts.sort((a, b) => a.startTime.localeCompare(b.startTime));
-  
-  // Return shelter shifts first, then other shifts
-  return [...shelterShifts, ...otherShifts];
+  return shifts.filter(shift => shift[dayField] === true);
 }
 
-// MODIFIED Helper function: Assign a resident to a specific role
+// Helper function: Assign a resident to a specific role
 async function assignResident(shift, role, date, dayOfWeek, dateStr, residents, residentWorkDays, dailyUsage, schedulePeriodId, slotIndex) {
   
   console.log(`    🎯 Trying to assign: ${role.roleTitle} (requires: ${role.qualification?.name || 'none'})`);
   
-  // SPECIAL HANDLING FOR ALL SHELTER RUNS (daily team consistency)
-  const isFriday = dayOfWeek === 5; // Friday is day 5
-  const isShelterRun = shift.department.name === 'shelter_runs';
-  
-  if (isShelterRun) {
-    console.log(`    🚐 SHELTER RUN: Processing ${shift.name} with team consistency logic`);
-    
-    if (isFriday) {
-      // FRIDAY SPECIAL LOGIC: 2 teams (breakfast + lunch/dinner)
-      console.log(`    🚐 FRIDAY SHELTER RUN: Special 2-team logic for ${shift.name}`);
-      
-      // For Friday evening/dinner shift, reuse the lunch team
-      if (shift.name === 'Shelter Run Evening' || shift.name.toLowerCase().includes('dinner')) {
-        console.log(`    🚐 FRIDAY DINNER: Trying to reuse lunch team member ${slotIndex + 1} for ${role.roleTitle}`);
-        
-        const lunchTeamMember = await findLunchTeamMember(schedulePeriodId, dateStr, role.roleTitle, slotIndex);
-        
-        if (lunchTeamMember) {
-          console.log(`    🚐 FRIDAY DINNER: Reusing ${lunchTeamMember.firstName} ${lunchTeamMember.lastName} from lunch team (slot ${slotIndex + 1})`);
-          
-          return {
-            success: true,
-            assignment: {
-              schedulePeriodId: parseInt(schedulePeriodId),
-              shiftId: shift.id,
-              residentId: lunchTeamMember.id,
-              assignedDate: date,
-              roleTitle: role.roleTitle,
-              status: 'scheduled'
-            },
-            residentName: `${lunchTeamMember.firstName} ${lunchTeamMember.lastName} (lunch team double shift)`
-          };
-        } else {
-          console.log(`    🚐 FRIDAY DINNER: ERROR - No lunch team member found for ${role.roleTitle} slot ${slotIndex + 1}. This should not happen!`);
-          
-          // Create a conflict instead of assigning new people
-          return {
-            success: false,
-            conflict: {
-              residentId: 0,
-              conflictDate: date,
-              conflictType: 'missing_lunch_team_member',
-              description: `No lunch team member found for ${shift.department.name} - ${shift.name} - ${role.roleTitle} slot ${slotIndex + 1} on ${dateStr}. Lunch team assignment may have failed.`,
-              severity: 'error'
-            },
-            reason: `No lunch team member found for ${role.roleTitle} slot ${slotIndex + 1}`
-          };
-        }
-      }
-      // Friday morning and midday use normal assignment logic below
-    } else {
-      // NON-FRIDAY LOGIC: Same 4 people for ALL shifts on the same day
-      console.log(`    🚐 NON-FRIDAY: Trying to reuse daily shelter team member ${slotIndex + 1} for ${role.roleTitle}`);
-      
-      // For non-morning shifts, MUST reuse the morning team
-      if (shift.name !== 'Shelter Run Morning' && !shift.name.toLowerCase().includes('morning')) {
-        const morningTeamMember = await findDailyTeamMember(schedulePeriodId, dateStr, role.roleTitle, slotIndex);
-        
-        if (morningTeamMember) {
-          console.log(`    🚐 NON-FRIDAY: Reusing ${morningTeamMember.firstName} ${morningTeamMember.lastName} from daily team (slot ${slotIndex + 1})`);
-          
-          return {
-            success: true,
-            assignment: {
-              schedulePeriodId: parseInt(schedulePeriodId),
-              shiftId: shift.id,
-              residentId: morningTeamMember.id,
-              assignedDate: date,
-              roleTitle: role.roleTitle,
-              status: 'scheduled'
-            },
-            residentName: `${morningTeamMember.firstName} ${morningTeamMember.lastName} (daily team)`
-          };
-        } else {
-          console.log(`    🚐 NON-FRIDAY: ERROR - No daily team member found for ${role.roleTitle} slot ${slotIndex + 1}. This should not happen!`);
-          
-          // Create a conflict instead of assigning new people
-          return {
-            success: false,
-            conflict: {
-              residentId: 0,
-              conflictDate: date,
-              conflictType: 'missing_daily_team_member',
-              description: `No daily team member found for ${shift.department.name} - ${shift.name} - ${role.roleTitle} slot ${slotIndex + 1} on ${dateStr}. Morning team assignment may have failed.`,
-              severity: 'error'
-            },
-            reason: `No daily team member found for ${role.roleTitle} slot ${slotIndex + 1}`
-          };
-        }
-      }
-      // Morning shift uses normal assignment logic below
-    }
-  }
-  
-  // Find eligible residents for this role (regular logic)
+  // Find eligible residents for this role
   const eligibleResidents = residents.filter(resident => {
     const eligible = isResidentEligible(resident, shift, role, date, dayOfWeek, dateStr, residentWorkDays, dailyUsage);
     if (!eligible) {
@@ -1398,110 +1242,6 @@ async function assignResident(shift, role, date, dayOfWeek, dateStr, residents, 
     },
     residentName: `${selectedResident.firstName} ${selectedResident.lastName}`
   };
-}
-
-// NEW Helper function: Find who did the morning shift for reuse in later shifts (non-Friday)
-async function findDailyTeamMember(schedulePeriodId, dateStr, roleTitle, slotIndex) {
-  try {
-    // Look for existing assignments for the same day in shelter runs for morning shift
-    const morningAssignments = await prisma.shiftAssignment.findMany({
-      where: {
-        schedulePeriodId: parseInt(schedulePeriodId),
-        assignedDate: {
-          gte: new Date(dateStr + 'T00:00:00'),
-          lte: new Date(dateStr + 'T23:59:59')
-        },
-        roleTitle: roleTitle,
-        shift: {
-          department: {
-            name: 'shelter_runs'
-          },
-          OR: [
-            { name: { contains: 'Morning' } },
-            { name: { contains: 'morning' } }
-          ]
-        }
-      },
-      include: {
-        resident: true,
-        shift: {
-          include: {
-            department: true
-          }
-        }
-      },
-      orderBy: [
-        { resident: { firstName: 'asc' } }, // Consistent ordering
-        { resident: { lastName: 'asc' } }
-      ]
-    });
-    
-    // Return the person at the specific slot index (0 = first driver, 1 = second driver, etc.)
-    if (morningAssignments && morningAssignments[slotIndex]) {
-      const assignment = morningAssignments[slotIndex];
-      console.log(`    🚐 Found daily team ${roleTitle} slot ${slotIndex + 1}: ${assignment.resident.firstName} ${assignment.resident.lastName}`);
-      return assignment.resident;
-    }
-    
-    console.log(`    🚐 No daily team member found for ${roleTitle} slot ${slotIndex + 1}`);
-    return null;
-  } catch (error) {
-    console.error('Error finding daily team member:', error);
-    return null;
-  }
-}
-
-// NEW Helper function: Find who did the lunch shift for reuse in dinner (Friday only)
-async function findLunchTeamMember(schedulePeriodId, dateStr, roleTitle, slotIndex) {
-  try {
-    // Look for existing assignments for the same day in shelter runs for lunch/midday
-    const lunchAssignments = await prisma.shiftAssignment.findMany({
-      where: {
-        schedulePeriodId: parseInt(schedulePeriodId),
-        assignedDate: {
-          gte: new Date(dateStr + 'T00:00:00'),
-          lte: new Date(dateStr + 'T23:59:59')
-        },
-        roleTitle: roleTitle,
-        shift: {
-          department: {
-            name: 'shelter_runs'
-          },
-          OR: [
-            { name: { contains: 'Midday' } },
-            { name: { contains: 'Lunch' } },
-            { name: { contains: 'lunch' } },
-            { name: { contains: 'midday' } }
-          ]
-        }
-      },
-      include: {
-        resident: true,
-        shift: {
-          include: {
-            department: true
-          }
-        }
-      },
-      orderBy: [
-        { resident: { firstName: 'asc' } }, // Consistent ordering
-        { resident: { lastName: 'asc' } }
-      ]
-    });
-    
-    // Return the person at the specific slot index (0 = first driver, 1 = second driver, etc.)
-    if (lunchAssignments && lunchAssignments[slotIndex]) {
-      const assignment = lunchAssignments[slotIndex];
-      console.log(`    🚐 Found lunch team ${roleTitle} slot ${slotIndex + 1}: ${assignment.resident.firstName} ${assignment.resident.lastName}`);
-      return assignment.resident;
-    }
-    
-    console.log(`    🚐 No lunch team member found for ${roleTitle} slot ${slotIndex + 1}`);
-    return null;
-  } catch (error) {
-    console.error('Error finding lunch team member:', error);
-    return null;
-  }
 }
 
 // Helper function: Get reasons why a resident is not eligible (for debugging)

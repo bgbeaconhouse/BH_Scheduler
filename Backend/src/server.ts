@@ -731,6 +731,8 @@ app.get('/api/shifts', async (req: any, res: any) => {
   }
 });
 
+// REPLACE your existing app.post('/api/shifts', ...) route with this:
+
 app.post('/api/shifts', async (req: any, res: any) => {
   try {
     const { 
@@ -744,11 +746,26 @@ app.post('/api/shifts', async (req: any, res: any) => {
       blocksAllAppointments,
       blocksCounselingOnly,
       allowsTemporaryLeave,
-      roles 
+      roles,
+      // NEW FIELDS for combined delivery shifts
+      isMultiPeriod,
+      deliveryRuns,
+      actualWorkHours,
+      isDeliveryShift 
     } = req.body;
     
     if (!departmentId || !name || !startTime || !endTime) {
       return res.status(400).json({ error: 'Department, name, start time, and end time are required' });
+    }
+
+    // Calculate actual work hours for delivery shifts
+    let calculatedWorkHours = actualWorkHours;
+    if (isDeliveryShift && deliveryRuns && deliveryRuns.length > 0) {
+      calculatedWorkHours = deliveryRuns.reduce((total: number, run: any) => {
+        const start = new Date(`2000-01-01T${run.startTime}:00`);
+        const end = new Date(`2000-01-01T${run.endTime}:00`);
+        return total + ((end.getTime() - start.getTime()) / (1000 * 60 * 60));
+      }, 0);
     }
 
     const shift = await prisma.shift.create({
@@ -769,6 +786,13 @@ app.post('/api/shifts', async (req: any, res: any) => {
         blocksAllAppointments: blocksAllAppointments || false,
         blocksCounselingOnly: blocksCounselingOnly || false,
         allowsTemporaryLeave: allowsTemporaryLeave || false,
+        
+        // NEW FIELDS - you'll need to add these to your Prisma schema
+        isMultiPeriod: isMultiPeriod || false,
+        deliveryRuns: deliveryRuns ? JSON.stringify(deliveryRuns) : null,
+        actualWorkHours: Math.round(calculatedWorkHours || 0),
+        isDeliveryShift: isDeliveryShift || false,
+        
         roles: {
           create: roles?.map((role: any) => ({
             qualificationId: role.qualificationId || null,
@@ -793,6 +817,7 @@ app.post('/api/shifts', async (req: any, res: any) => {
     res.status(500).json({ error: 'Failed to create shift' });
   }
 });
+// REPLACE your existing app.put('/api/shifts/:id', ...) route with this:
 
 app.put('/api/shifts/:id', async (req: any, res: any) => {
   try {
@@ -808,11 +833,26 @@ app.put('/api/shifts/:id', async (req: any, res: any) => {
       blocksAllAppointments,
       blocksCounselingOnly,
       allowsTemporaryLeave,
-      roles 
+      roles,
+      // NEW FIELDS
+      isMultiPeriod,
+      deliveryRuns,
+      actualWorkHours,
+      isDeliveryShift 
     } = req.body;
     
     if (!departmentId || !name || !startTime || !endTime) {
       return res.status(400).json({ error: 'Department, name, start time, and end time are required' });
+    }
+
+    // Calculate actual work hours for delivery shifts
+    let calculatedWorkHours = actualWorkHours;
+    if (isDeliveryShift && deliveryRuns && deliveryRuns.length > 0) {
+      calculatedWorkHours = deliveryRuns.reduce((total: number, run: any) => {
+        const start = new Date(`2000-01-01T${run.startTime}:00`);
+        const end = new Date(`2000-01-01T${run.endTime}:00`);
+        return total + ((end.getTime() - start.getTime()) / (1000 * 60 * 60));
+      }, 0);
     }
 
     await prisma.shiftRole.deleteMany({
@@ -838,6 +878,13 @@ app.put('/api/shifts/:id', async (req: any, res: any) => {
         blocksAllAppointments: blocksAllAppointments || false,
         blocksCounselingOnly: blocksCounselingOnly || false,
         allowsTemporaryLeave: allowsTemporaryLeave || false,
+        
+        // NEW FIELDS
+        isMultiPeriod: isMultiPeriod || false,
+        deliveryRuns: deliveryRuns ? JSON.stringify(deliveryRuns) : null,
+        actualWorkHours: Math.round(calculatedWorkHours || 0),
+        isDeliveryShift: isDeliveryShift || false,
+        
         roles: {
           create: roles?.map((role: any) => ({
             qualificationId: role.qualificationId || null,
@@ -910,6 +957,84 @@ app.get('/api/shifts/:id', async (req: any, res: any) => {
   } catch (error: any) {
     console.error('Error fetching shift:', error);
     res.status(500).json({ error: 'Failed to fetch shift' });
+  }
+});
+
+// ADD this new route after your existing shift routes (around line 800):
+
+// Specialized route for creating delivery shifts
+app.post('/api/shifts/delivery', async (req: any, res: any) => {
+  try {
+    const { departmentId, deliveryRuns, teamComposition, name, description } = req.body;
+    
+    if (!departmentId || !deliveryRuns || deliveryRuns.length === 0) {
+      return res.status(400).json({ error: 'Department ID and delivery runs are required' });
+    }
+    
+    // Calculate work hours from delivery runs
+    const totalWorkHours = deliveryRuns.reduce((total: number, run: any) => {
+      const start = new Date(`2000-01-01T${run.startTime}:00`);
+      const end = new Date(`2000-01-01T${run.endTime}:00`);
+      return total + ((end.getTime() - start.getTime()) / (1000 * 60 * 60));
+    }, 0);
+    
+    // Standard delivery team composition
+    const defaultRoles = [
+      { roleTitle: "Lead Driver", requiredCount: 1, qualificationId: null },
+      { roleTitle: "Secondary Driver", requiredCount: 1, qualificationId: null },
+      { roleTitle: "Delivery Assistant", requiredCount: 2, qualificationId: null }
+    ];
+    
+    const shift = await prisma.shift.create({
+      data: {
+        departmentId: parseInt(departmentId),
+        name: name || "Daily Shelter Delivery Team",
+        description: description || "Complete daily shelter delivery: breakfast, lunch, and dinner runs",
+        startTime: deliveryRuns[0].startTime,
+        endTime: deliveryRuns[deliveryRuns.length - 1].endTime,
+        
+        // Delivery shifts typically run all days (modify as needed)
+        monday: true,
+        tuesday: true,
+        wednesday: true,
+        thursday: true,
+        friday: true,
+        saturday: true,
+        sunday: true,
+        
+        minTenureMonths: 3, // Need experienced residents
+        blocksAllAppointments: true, // Can't have appointments on delivery days
+        allowsTemporaryLeave: false,
+        
+        // Multi-period tracking
+        isMultiPeriod: true,
+        isDeliveryShift: true,
+        deliveryRuns: JSON.stringify(deliveryRuns),
+        actualWorkHours: Math.round(totalWorkHours),
+        
+        roles: {
+          create: teamComposition || defaultRoles
+        }
+      },
+      include: {
+        department: true,
+        roles: {
+          include: {
+            qualification: true
+          }
+        }
+      }
+    });
+    
+    res.status(201).json({
+      shift,
+      calculatedWorkHours: Math.round(totalWorkHours),
+      deliveryWindows: deliveryRuns.length,
+      message: "Delivery shift created successfully"
+    });
+  } catch (error: any) {
+    console.error('Error creating delivery shift:', error);
+    res.status(500).json({ error: 'Failed to create delivery shift' });
   }
 });
 
@@ -1127,11 +1252,37 @@ async function generateAssignments(shifts, residents, dates, schedulePeriodId) {
 
     // Get shifts that run on this day
     const dayShifts = getShiftsForDay(shifts, dayOfWeek);
-    
-    // Process each shift for this day
+  // Process each shift for this day
     for (const shift of dayShifts) {
       console.log(`  🔧 Processing shift: ${shift.name} (${shift.department.name})`);
       
+      // CHECK: Is this a delivery shift that needs team assignment?
+      if (shift.isDeliveryShift || shift.isMultiPeriod) {
+        console.log(`  🚚 DELIVERY SHIFT DETECTED: ${shift.name}`);
+        
+        const teamResult = await assignDeliveryTeam(
+          shift, 
+          residents, 
+          date, 
+          dayOfWeek, 
+          dateStr, 
+          residentWorkDays, 
+          dailyUsage, 
+          schedulePeriodId
+        );
+        
+        if (teamResult.success) {
+          assignments.push(...teamResult.assignments);
+          console.log(`    ✅ Delivery team assigned: ${teamResult.teamSize} members`);
+        } else {
+          conflicts.push(teamResult.conflict);
+          console.log(`    ❌ Delivery team assignment failed`);
+        }
+        
+        continue; // Skip to next shift (delivery shifts are handled as complete teams)
+      }
+      
+      // EXISTING CODE: Handle regular shifts (non-delivery)
       // DEBUG: Show all roles for this shift
       console.log(`    Roles in this shift:`);
       shift.roles.forEach((role, index) => {
@@ -1307,7 +1458,6 @@ function getIneligibilityReasons(resident, shift, role, date, dayOfWeek, dateStr
   return reasons;
 }
 
-// Helper function: Check if resident is eligible for a role
 function isResidentEligible(resident, shift, role, date, dayOfWeek, dateStr, residentWorkDays, dailyUsage) {
   
   // Check if already worked today (basic rule)
@@ -1341,7 +1491,12 @@ function isResidentEligible(resident, shift, role, date, dayOfWeek, dateStr, res
     }
   }
 
-  // Check availability
+  // ENHANCED: Special handling for delivery shifts
+  if (shift.isDeliveryShift || shift.isMultiPeriod) {
+    return isEligibleForDeliveryShift(resident, shift, date, dayOfWeek);
+  }
+
+  // Standard availability check for regular shifts
   const dayAvailability = resident.availability.find(a => a.dayOfWeek === dayOfWeek);
   if (dayAvailability) {
     const shiftStart = new Date(`2000-01-01T${shift.startTime}:00`);
@@ -1366,6 +1521,150 @@ function isResidentEligible(resident, shift, role, date, dayOfWeek, dateStr, res
   }
 
   return true;
+}
+
+// NEW FUNCTION: Enhanced eligibility check for delivery shifts
+function isEligibleForDeliveryShift(resident, shift, date, dayOfWeek) {
+  console.log(`    🚚 Checking delivery shift eligibility for ${resident.firstName} ${resident.lastName}`);
+  
+  // Must be available for ENTIRE commitment period
+  const dayAvailability = resident.availability.find(a => a.dayOfWeek === dayOfWeek);
+  if (dayAvailability) {
+    const shiftStart = new Date(`2000-01-01T${shift.startTime}:00`);
+    const shiftEnd = new Date(`2000-01-01T${shift.endTime}:00`);
+    const availStart = new Date(`2000-01-01T${dayAvailability.startTime}:00`);
+    const availEnd = new Date(`2000-01-01T${dayAvailability.endTime}:00`);
+
+    if (shiftStart < availStart || shiftEnd > availEnd) {
+      console.log(`      ❌ Not available for full commitment (${shift.startTime}-${shift.endTime})`);
+      return false;
+    }
+  }
+  
+  // For delivery shifts, ANY appointment blocks the entire day
+  const hasAppointmentConflict = resident.appointments.some(apt => {
+    const aptDateStr = new Date(apt.startDateTime).toLocaleDateString('en-CA');
+    const currentDateStr = date.toLocaleDateString('en-CA');
+    return aptDateStr === currentDateStr;
+  });
+  
+  if (hasAppointmentConflict) {
+    console.log(`      ❌ Has appointment conflict on delivery day`);
+    return false;
+  }
+
+  // If shift has delivery runs, check conflicts with each delivery window
+  if (shift.deliveryRuns) {
+    try {
+      const deliveryRuns = typeof shift.deliveryRuns === 'string' 
+        ? JSON.parse(shift.deliveryRuns) 
+        : shift.deliveryRuns;
+      
+      for (const run of deliveryRuns) {
+        const runStart = new Date(`2000-01-01T${run.startTime}:00`);
+        const runEnd = new Date(`2000-01-01T${run.endTime}:00`);
+        
+        const hasRunConflict = resident.appointments.some(apt => {
+          const aptDate = new Date(apt.startDateTime);
+          const aptTime = new Date(`2000-01-01T${aptDate.getHours()}:${aptDate.getMinutes()}:00`);
+          const aptEnd = new Date(apt.endDateTime);
+          const aptEndTime = new Date(`2000-01-01T${aptEnd.getHours()}:${aptEnd.getMinutes()}:00`);
+          
+          return (aptTime < runEnd && aptEndTime > runStart);
+        });
+        
+        if (hasRunConflict) {
+          console.log(`      ❌ Appointment conflicts with ${run.name} delivery window`);
+          return false;
+        }
+      }
+    } catch (error) {
+      console.log(`      ⚠️ Error parsing delivery runs: ${error.message}`);
+    }
+  }
+  
+  console.log(`      ✅ Eligible for delivery shift`);
+  return true;
+}
+
+// ENHANCED: Update the generateAssignments function to handle delivery teams
+// ADD this function before your existing generateAssignments function:
+
+async function assignDeliveryTeam(shift, residents, date, dayOfWeek, dateStr, residentWorkDays, dailyUsage, schedulePeriodId) {
+  console.log(`  🚚 Processing DELIVERY SHIFT: ${shift.name}`);
+  
+  const teamAssignments = [];
+  const teamMembers = new Set();
+  let conflictFound = false;
+  
+  // Try to assign each role in the delivery team
+  for (const role of shift.roles) {
+    for (let i = 0; i < role.requiredCount; i++) {
+      const eligibleResidents = residents.filter(resident => {
+        return isResidentEligible(resident, shift, role, date, dayOfWeek, dateStr, residentWorkDays, dailyUsage) &&
+               !teamMembers.has(resident.id); // Don't assign same person multiple roles
+      });
+      
+      if (eligibleResidents.length === 0) {
+        console.log(`    ❌ Cannot find eligible resident for ${role.roleTitle} slot ${i + 1}`);
+        conflictFound = true;
+        break;
+      }
+      
+      // Sort by least worked (load balancing)
+      const sortedResidents = eligibleResidents.sort((a, b) => {
+        const aWorkDays = residentWorkDays.get(a.id).size;
+        const bWorkDays = residentWorkDays.get(b.id).size;
+        return aWorkDays - bWorkDays;
+      });
+      
+      const selectedResident = sortedResidents[0];
+      teamMembers.add(selectedResident.id);
+      
+      // Update tracking for this resident
+      residentWorkDays.get(selectedResident.id).add(dateStr);
+      dailyUsage.get(dateStr).add(selectedResident.id);
+      
+      teamAssignments.push({
+        schedulePeriodId: parseInt(schedulePeriodId),
+        shiftId: shift.id,
+        residentId: selectedResident.id,
+        assignedDate: date,
+        roleTitle: role.roleTitle,
+        status: 'scheduled',
+        notes: shift.deliveryRuns ? 'Delivery team - all runs (breakfast, lunch, dinner)' : 'Multi-period shift team member'
+      });
+      
+      console.log(`    ✅ Assigned ${selectedResident.firstName} ${selectedResident.lastName} as ${role.roleTitle}`);
+    }
+    
+    if (conflictFound) break;
+  }
+  
+  if (conflictFound) {
+    // Rollback any tracking changes if team can't be completed
+    teamMembers.forEach(residentId => {
+      residentWorkDays.get(residentId).delete(dateStr);
+      dailyUsage.get(dateStr).delete(residentId);
+    });
+    
+    return {
+      success: false,
+      conflict: {
+        residentId: 0,
+        conflictDate: date,
+        conflictType: 'incomplete_delivery_team',
+        description: `Cannot form complete delivery team for ${shift.name} on ${dateStr} - missing team members`,
+        severity: 'high'
+      }
+    };
+  }
+  
+  return {
+    success: true,
+    assignments: teamAssignments,
+    teamSize: teamMembers.size
+  };
 }
 
 // Helper function: Save assignments and conflicts to database

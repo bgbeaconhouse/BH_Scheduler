@@ -131,6 +131,10 @@ model Shift {
   allowsTemporaryLeave     Boolean @default(false) // True for doctor appointments during thrift store
   
   isActive     Boolean @default(true)
+    isMultiPeriod     Boolean @default(false)
+  isDeliveryShift   Boolean @default(false)
+  deliveryRuns      String?  // JSON string of delivery time windows
+  actualWorkHours   Int?     // Actual working hours (vs total commitment time)
   
   // Relationships
   department   Department @relation(fields: [departmentId], references: [id])
@@ -259,12 +263,12 @@ model ScheduleConflict {
 model WorkLimit {
   id         Int      @id @default(autoincrement())
   residentId Int?     // null means global default
-  limitType  String   // "daily_hours", "weekly_days", "monthly_days"
-  maxValue   Int      // maximum allowed value
+  limitType  String   @default("weekly_days") // ADD DEFAULT
+  maxValue   Int      @default(3)             // ADD DEFAULT  
   isActive   Boolean  @default(true)
   reason     String?  // why this limit exists
   createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  updatedAt  DateTime @default(now()) @updatedAt // ADD DEFAULT
 
   resident Resident? @relation(fields: [residentId], references: [id], onDelete: Cascade)
 

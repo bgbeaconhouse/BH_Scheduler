@@ -1231,58 +1231,87 @@ function getShiftsForDay(shifts, dayOfWeek) {
     return [...shelterShifts, ...otherShifts];
   }
   
-  return dayShifts;
+  // For non-Friday, ensure shelter runs are processed in order too
+  const shelterShifts = dayShifts.filter(shift => shift.department.name === 'shelter_runs');
+  const otherShifts = dayShifts.filter(shift => shift.department.name !== 'shelter_runs');
+  
+  // Sort shelter shifts by time
+  shelterShifts.sort((a, b) => a.startTime.localeCompare(b.startTime));
+  
+  // Return shelter shifts first, then other shifts
+  return [...shelterShifts, ...otherShifts];
 }
 
-// Helper function: Assign a resident to a specific role (MODIFIED for Friday shelter runs)
+// MODIFIED Helper function: Assign a resident to a specific role
 async function assignResident(shift, role, date, dayOfWeek, dateStr, residents, residentWorkDays, dailyUsage, schedulePeriodId, slotIndex) {
   
   console.log(`    🎯 Trying to assign: ${role.roleTitle} (requires: ${role.qualification?.name || 'none'})`);
   
-  // SPECIAL HANDLING FOR FRIDAY SHELTER RUNS
+  // SPECIAL HANDLING FOR ALL SHELTER RUNS (daily team consistency)
   const isFriday = dayOfWeek === 5; // Friday is day 5
   const isShelterRun = shift.department.name === 'shelter_runs';
   
-  if (isFriday && isShelterRun) {
-    console.log(`    🚐 FRIDAY SHELTER RUN: Special logic for ${shift.name}`);
+  if (isShelterRun) {
+    console.log(`    🚐 SHELTER RUN: Processing ${shift.name} with team consistency logic`);
     
-    // For Friday shelter runs, we want:
-    // - Morning shift: 2 drivers + 2 assistants (breakfast team)
-    // - Midday shift: 2 drivers + 2 assistants (lunch team)  
-    // - Evening shift: Same 2 drivers + 2 assistants as midday (lunch team works double)
-    
-    // Morning shift works normally (2 drivers + 2 assistants)
-    // Only evening shift gets special treatment (reuse midday team)
-    
-    // For Friday evening/dinner shift, try to use the same team as midday/lunch
-    if (shift.name === 'Shelter Run Evening' || shift.name.toLowerCase().includes('dinner')) {
-      console.log(`    🚐 FRIDAY DINNER: Trying to reuse lunch team member ${slotIndex + 1} for ${role.roleTitle}`);
+    if (isFriday) {
+      // FRIDAY SPECIAL LOGIC: 2 teams (breakfast + lunch/dinner)
+      console.log(`    🚐 FRIDAY SHELTER RUN: Special 2-team logic for ${shift.name}`);
       
-      // Find who did the midday/lunch shelter run for the same role and slot
-      const lunchTeamMember = await findLunchTeamMember(schedulePeriodId, dateStr, role.roleTitle, slotIndex);
-      
-      if (lunchTeamMember) {
-        console.log(`    🚐 FRIDAY DINNER: Reusing ${lunchTeamMember.firstName} ${lunchTeamMember.lastName} from lunch team (slot ${slotIndex + 1})`);
+      // For Friday evening/dinner shift, reuse the lunch team
+      if (shift.name === 'Shelter Run Evening' || shift.name.toLowerCase().includes('dinner')) {
+        console.log(`    🚐 FRIDAY DINNER: Trying to reuse lunch team member ${slotIndex + 1} for ${role.roleTitle}`);
         
-        // For evening shift, we don't need to check eligibility again since it's the same day
-        // and we want to reuse the exact same people
-        // dailyUsage already tracks them for today, no need to add again
+        const lunchTeamMember = await findLunchTeamMember(schedulePeriodId, dateStr, role.roleTitle, slotIndex);
         
-        return {
-          success: true,
-          assignment: {
-            schedulePeriodId: parseInt(schedulePeriodId),
-            shiftId: shift.id,
-            residentId: lunchTeamMember.id,
-            assignedDate: date,
-            roleTitle: role.roleTitle,
-            status: 'scheduled'
-          },
-          residentName: `${lunchTeamMember.firstName} ${lunchTeamMember.lastName} (lunch team double shift)`
-        };
-      } else {
-        console.log(`    🚐 FRIDAY DINNER: No lunch team member found for ${role.roleTitle} slot ${slotIndex + 1}, will assign new person`);
+        if (lunchTeamMember) {
+          console.log(`    🚐 FRIDAY DINNER: Reusing ${lunchTeamMember.firstName} ${lunchTeamMember.lastName} from lunch team (slot ${slotIndex + 1})`);
+          
+          return {
+            success: true,
+            assignment: {
+              schedulePeriodId: parseInt(schedulePeriodId),
+              shiftId: shift.id,
+              residentId: lunchTeamMember.id,
+              assignedDate: date,
+              roleTitle: role.roleTitle,
+              status: 'scheduled'
+            },
+            residentName: `${lunchTeamMember.firstName} ${lunchTeamMember.lastName} (lunch team double shift)`
+          };
+        } else {
+          console.log(`    🚐 FRIDAY DINNER: No lunch team member found for ${role.roleTitle} slot ${slotIndex + 1}, will assign new person`);
+        }
       }
+      // Friday morning and midday use normal assignment logic below
+    } else {
+      // NON-FRIDAY LOGIC: Same 4 people for ALL shifts on the same day
+      console.log(`    🚐 NON-FRIDAY: Trying to reuse daily shelter team member ${slotIndex + 1} for ${role.roleTitle}`);
+      
+      // For non-morning shifts, try to reuse the morning team
+      if (shift.name !== 'Shelter Run Morning' && !shift.name.toLowerCase().includes('morning')) {
+        const morningTeamMember = await findDailyTeamMember(schedulePeriodId, dateStr, role.roleTitle, slotIndex);
+        
+        if (morningTeamMember) {
+          console.log(`    🚐 NON-FRIDAY: Reusing ${morningTeamMember.firstName} ${morningTeamMember.lastName} from daily team (slot ${slotIndex + 1})`);
+          
+          return {
+            success: true,
+            assignment: {
+              schedulePeriodId: parseInt(schedulePeriodId),
+              shiftId: shift.id,
+              residentId: morningTeamMember.id,
+              assignedDate: date,
+              roleTitle: role.roleTitle,
+              status: 'scheduled'
+            },
+            residentName: `${morningTeamMember.firstName} ${morningTeamMember.lastName} (daily team)`
+          };
+        } else {
+          console.log(`    🚐 NON-FRIDAY: No daily team member found for ${role.roleTitle} slot ${slotIndex + 1}, will assign new person`);
+        }
+      }
+      // Morning shift uses normal assignment logic below
     }
   }
   
@@ -1345,7 +1374,58 @@ async function assignResident(shift, role, date, dayOfWeek, dateStr, residents, 
   };
 }
 
-// NEW Helper function: Find who did the lunch shift for reuse in dinner (with slot tracking)
+// NEW Helper function: Find who did the morning shift for reuse in later shifts (non-Friday)
+async function findDailyTeamMember(schedulePeriodId, dateStr, roleTitle, slotIndex) {
+  try {
+    // Look for existing assignments for the same day in shelter runs for morning shift
+    const morningAssignments = await prisma.shiftAssignment.findMany({
+      where: {
+        schedulePeriodId: parseInt(schedulePeriodId),
+        assignedDate: {
+          gte: new Date(dateStr + 'T00:00:00'),
+          lte: new Date(dateStr + 'T23:59:59')
+        },
+        roleTitle: roleTitle,
+        shift: {
+          department: {
+            name: 'shelter_runs'
+          },
+          OR: [
+            { name: { contains: 'Morning' } },
+            { name: { contains: 'morning' } }
+          ]
+        }
+      },
+      include: {
+        resident: true,
+        shift: {
+          include: {
+            department: true
+          }
+        }
+      },
+      orderBy: [
+        { resident: { firstName: 'asc' } }, // Consistent ordering
+        { resident: { lastName: 'asc' } }
+      ]
+    });
+    
+    // Return the person at the specific slot index (0 = first driver, 1 = second driver, etc.)
+    if (morningAssignments && morningAssignments[slotIndex]) {
+      const assignment = morningAssignments[slotIndex];
+      console.log(`    🚐 Found daily team ${roleTitle} slot ${slotIndex + 1}: ${assignment.resident.firstName} ${assignment.resident.lastName}`);
+      return assignment.resident;
+    }
+    
+    console.log(`    🚐 No daily team member found for ${roleTitle} slot ${slotIndex + 1}`);
+    return null;
+  } catch (error) {
+    console.error('Error finding daily team member:', error);
+    return null;
+  }
+}
+
+// NEW Helper function: Find who did the lunch shift for reuse in dinner (Friday only)
 async function findLunchTeamMember(schedulePeriodId, dateStr, roleTitle, slotIndex) {
   try {
     // Look for existing assignments for the same day in shelter runs for lunch/midday

@@ -1280,7 +1280,20 @@ async function assignResident(shift, role, date, dayOfWeek, dateStr, residents, 
             residentName: `${lunchTeamMember.firstName} ${lunchTeamMember.lastName} (lunch team double shift)`
           };
         } else {
-          console.log(`    🚐 FRIDAY DINNER: No lunch team member found for ${role.roleTitle} slot ${slotIndex + 1}, will assign new person`);
+          console.log(`    🚐 FRIDAY DINNER: ERROR - No lunch team member found for ${role.roleTitle} slot ${slotIndex + 1}. This should not happen!`);
+          
+          // Create a conflict instead of assigning new people
+          return {
+            success: false,
+            conflict: {
+              residentId: 0,
+              conflictDate: date,
+              conflictType: 'missing_lunch_team_member',
+              description: `No lunch team member found for ${shift.department.name} - ${shift.name} - ${role.roleTitle} slot ${slotIndex + 1} on ${dateStr}. Lunch team assignment may have failed.`,
+              severity: 'error'
+            },
+            reason: `No lunch team member found for ${role.roleTitle} slot ${slotIndex + 1}`
+          };
         }
       }
       // Friday morning and midday use normal assignment logic below
@@ -1288,7 +1301,7 @@ async function assignResident(shift, role, date, dayOfWeek, dateStr, residents, 
       // NON-FRIDAY LOGIC: Same 4 people for ALL shifts on the same day
       console.log(`    🚐 NON-FRIDAY: Trying to reuse daily shelter team member ${slotIndex + 1} for ${role.roleTitle}`);
       
-      // For non-morning shifts, try to reuse the morning team
+      // For non-morning shifts, MUST reuse the morning team
       if (shift.name !== 'Shelter Run Morning' && !shift.name.toLowerCase().includes('morning')) {
         const morningTeamMember = await findDailyTeamMember(schedulePeriodId, dateStr, role.roleTitle, slotIndex);
         
@@ -1308,7 +1321,20 @@ async function assignResident(shift, role, date, dayOfWeek, dateStr, residents, 
             residentName: `${morningTeamMember.firstName} ${morningTeamMember.lastName} (daily team)`
           };
         } else {
-          console.log(`    🚐 NON-FRIDAY: No daily team member found for ${role.roleTitle} slot ${slotIndex + 1}, will assign new person`);
+          console.log(`    🚐 NON-FRIDAY: ERROR - No daily team member found for ${role.roleTitle} slot ${slotIndex + 1}. This should not happen!`);
+          
+          // Create a conflict instead of assigning new people
+          return {
+            success: false,
+            conflict: {
+              residentId: 0,
+              conflictDate: date,
+              conflictType: 'missing_daily_team_member',
+              description: `No daily team member found for ${shift.department.name} - ${shift.name} - ${role.roleTitle} slot ${slotIndex + 1} on ${dateStr}. Morning team assignment may have failed.`,
+              severity: 'error'
+            },
+            reason: `No daily team member found for ${role.roleTitle} slot ${slotIndex + 1}`
+          };
         }
       }
       // Morning shift uses normal assignment logic below

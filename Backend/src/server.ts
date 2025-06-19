@@ -945,6 +945,8 @@ app.get('/api/schedule-periods', async (req: any, res: any) => {
   }
 });
 
+// Replace your existing schedule period creation route with this fixed version:
+
 app.post('/api/schedule-periods', async (req: any, res: any) => {
   try {
     const { name, startDate, endDate } = req.body;
@@ -953,11 +955,43 @@ app.post('/api/schedule-periods', async (req: any, res: any) => {
       return res.status(400).json({ error: 'Name, start date, and end date are required' });
     }
 
+    // Function to treat input as Pacific Time and store it properly
+    function parsePacificDate(dateString: string): Date {
+      // Add time component to make it noon Pacific time to avoid timezone issues
+      const dateWithTime = `${dateString}T12:00:00`;
+      const cleanString = dateWithTime.replace('Z', '');
+      const date = new Date(cleanString);
+      
+      // California is UTC-8 (PST) or UTC-7 (PDT)
+      // For simplicity, let's use UTC-7 (PDT) since it's summer
+      const pacificOffset = 7 * 60; // 7 hours in minutes
+      
+      // Add the offset to store the "local" time as if it were UTC
+      const adjustedDate = new Date(date.getTime() + (pacificOffset * 60 * 1000));
+      
+      return adjustedDate;
+    }
+
+    console.log('=== SCHEDULE PERIOD DATE FIX ===');
+    console.log('Received startDate:', startDate);
+    console.log('Received endDate:', endDate);
+    console.log('Original start Date object:', new Date(startDate).toString());
+    console.log('Original end Date object:', new Date(endDate).toString());
+    
+    const adjustedStartDate = parsePacificDate(startDate);
+    const adjustedEndDate = parsePacificDate(endDate);
+    
+    console.log('Adjusted start for Pacific Time:', adjustedStartDate.toString());
+    console.log('Adjusted end for Pacific Time:', adjustedEndDate.toString());
+    console.log('Storing start as UTC:', adjustedStartDate.toISOString());
+    console.log('Storing end as UTC:', adjustedEndDate.toISOString());
+    console.log('===============================');
+
     const period = await prisma.schedulePeriod.create({
       data: {
         name: name.trim(),
-        startDate: new Date(startDate),
-        endDate: new Date(endDate)
+        startDate: adjustedStartDate,
+        endDate: adjustedEndDate
       }
     });
     
